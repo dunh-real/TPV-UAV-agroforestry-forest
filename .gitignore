@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Models / weights / data (không commit lên git)
+*.pt
+*.engine
+*.onnx
+*.pth
+data/
+datasets/
+weights/
+runs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+*.local
