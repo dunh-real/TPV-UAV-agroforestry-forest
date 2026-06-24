@@ -1,0 +1,120 @@
+# Transport harness (test trên server)
+
+Hiện thực tầng transport theo `docs/communication-transport-spec.md`, **AI worker dùng
+model thật YOLO26x** (không phải echo §11). Chạy được end-to-end ngay trên server này.
+
+## Môi trường (đã dựng sẵn)
+
+- Python **3.12.10** qua `uv`, venv ở `.venv/` (torch 2.12.1+cu130, ultralytics 8.4.75).
+- GPU: 2× RTX PRO 6000 Blackwell (sm_120). YOLO26x ~9.6ms/frame @1080p fp32.
+- Hạ tầng qua **docker-compose** (`docker compose up -d`):
+  - Redis test: container `rs-redis-test` ở **host:6380** (KHÔNG đụng `redis-prod` 6379).
+  - MinIO LOCAL: container `rs-minio`, API **:9000** + console **:9001**, creds `admin/admin123456`,
+    bucket `images`. (Máy MinIO 192.168.100.190 ở mạng khác — khi thông thì set
+    `MINIO_ENDPOINT=192.168.100.190:9000` và bỏ service minio trong compose.)
+- Weights: `weights/yolo26x.pt` + `weights/yolo26x.engine` (TensorRT FP16). Ảnh mẫu: `samples/`.
+
+Cài lại từ đầu nếu cần:
+```bash
+uv venv --python 3.12.10 .venv
+uv pip install --python .venv --index-strategy unsafe-best-match \
+  --extra-index-url https://download.pytorch.org/whl/cu128 \
+  torch torchvision ultralytics redis msgpack minio
+docker compose up -d           # redis + minio
+```
+
+## Thành phần
+
+| File | Vai trò | Spec |
+|---|---|---|
+| `config.py` | Tham số (REDIS_URL, stream, MAXLEN, batch…) qua env | §2, §9 |
+| `envelope.py` | Đóng/mở gói msgpack + bytes ảnh | §3, §8 |
+| `init_streams.py` | Tạo consumer group `cg:ai`, `cg:be` | §4.1 |
+| `producer.py` | Drone giả lập: ảnh → XADD `frames:req` | §4.2 |
+| `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `frames:res` → XACK; XAUTOCLAIM | §3, §4.3-4.4 |
+| `storage.py` | MinIO/S3: upload ảnh annotated async (thread pool), bucket auto-create | §4 |
+| (worker) event-gate + dedup | Lưu ảnh CHỈ khi có sự kiện + dedup `(drone,cls)`/cửa sổ qua Redis `SET NX EX` | §6.5, §11 |
+| `consumer.py` | BE: XREADGROUP `frames:res`, đo g2g latency, hiện `annotated_ref` | §10, §11 |
+| `loadtest.py` | Đội drone (thread) + BE collector: đo throughput/latency/drop dưới tải | §11 |
+
+## Chạy
+
+Một phát end-to-end (worker + BE chạy nền, rồi producer):
+```bash
+DRONE=drone1 FPS=10 COUNT=100 scripts/run_e2e.sh
+```
+
+Hoặc tách tiến trình (mỗi cái 1 terminal — `python -u` để log không bị buffer):
+```bash
+.venv/bin/python -m transport.init_streams
+.venv/bin/python -u -m transport.consumer
+.venv/bin/python -u -m transport.worker          # WORKER_NAME=w2 DEVICE=1 cho worker thứ 2
+.venv/bin/python -m transport.producer --src samples --drone drone1 --fps 10 --count 100
+```
+
+Giám sát Redis:
+```bash
+docker exec rs-redis-test redis-cli XLEN frames:req
+docker exec rs-redis-test redis-cli XPENDING frames:req cg:ai
+docker exec rs-redis-test redis-cli XINFO GROUPS frames:req
+```
+
+## Load test (ảnh thật COCO val2017, imgsz=960, MinIO bật)
+
+`python -m transport.loadtest --src data/val2017 --drones D --fps F --secs T` (đội drone +
+BE collector; worker chạy tách process). Số đo trên server 2× Blackwell:
+
+| Test | Worker | Tải | Drop | Throughput | g2g p50 / p99 |
+|---|---|---|---|---|---|
+| 1 | 1× **.pt** FP16 | 50 fps | 0% | 50 fps | **722 / 1477 ms** (bão hòa) |
+| 2 | 1× **engine** | 50 fps | 0% | 50 fps | **38 / 75 ms** |
+| 3 | 1× engine | 250 fps | 55% | ~111 fps | (trần 1 worker) |
+| 5 | **4× engine** (2 GPU) | 200 fps | 0% | 199 fps | **17 / 33 ms** |
+
+Kết luận: TensorRT engine hạ latency ~19× ở cùng tải (drain nhanh hơn nhiều → hết dồn hàng);
+trần 1 worker (đơn luồng: decode+infer+vẽ box+upload tuần tự) ~111 fps; **scale ngang nhiều
+worker share GPU qua consumer group** → 4 worker gánh 200 fps, 0 drop, latency vẫn ~17ms.
+
+### Chạy bằng TensorRT engine + nhiều worker
+```bash
+scripts/run_workers.sh        # 2 worker engine, mỗi GPU 1 (khuyến nghị ~4 drone)
+N=4 scripts/run_workers.sh    # 4 worker (chỉ khi tải > ~100fps)
+```
+
+### Cấu hình khuyến nghị: ~4 drone (≈40fps tổng) → **2 worker, mỗi card 1**
+Đo thực (4 drone × 10fps): 1 worker g2g p50=31ms; **2 worker p50=18ms** (wait 19.6→8ms), đều 0 drop.
+Chọn 2 không vì tốc độ (1 đã thừa, trần ~111fps) mà vì: (a) latency thấp hơn 42% do song song hóa
+burst, (b) **dự phòng** — 1 worker chết là đứng pipeline; 2 worker thì cái kia chạy tiếp + XAUTOCLAIM
+nhặt frame pending, (c) cách ly 2 GPU. VRAM ~0.4–2GB/worker nên chi phí ~0. Đừng dùng 4 worker cho
+4 drone (thừa, tốn VRAM vô ích).
+Engine khóa GPU-arch + imgsz + batch ⇒ đổi card/imgsz phải export lại. Engine dynamic batch
+(`dynamic=True batch=16`) build nặng, cần `workspace` lớn (≥32GB) — chưa cần vì multi-worker
+batch=1 đã đủ. Worker tự dựng lại consumer group khi Redis bị flush/restart (NOGROUP → recreate, spec §5).
+
+## Lưu ảnh: event-gate + dedup (chống phình đĩa)
+
+Worker chỉ **lưu ảnh** khi có detection là **sự kiện** (`cls ∈ EVENT_CLASSES`, rỗng=mọi lớp;
+`conf ≥ EVENT_CONF`) và qua **dedup**: mỗi `(drone, cls)` lưu 1 ảnh / `DEDUP_WINDOW_S` giây
+(lock chung ở Redis `SET NX EX` nên nhiều worker không lưu trùng). **Metadata vẫn ra mọi frame**
+trên `frames:res` (kèm cờ `event` cho BE alert) — chỉ ẢNH bị lọc.
+
+Đo thực (120 frame @10fps, window 5s): metadata **120/120**, ảnh MinIO **6** (giảm 20×). Tải thật
+(1 vật dai dẳng) → ~1 ảnh/cửa sổ thay vì ~38/s (~190×). Config: `EVENT_CLASSES`, `EVENT_CONF`
+(0.5), `DEDUP_WINDOW_S` (5). Bản đầy đủ dedup theo `track_id` (cần tầng tracking — chưa có);
+"chọn frame nét nhất trong cửa sổ" (variance of Laplacian) là cải tiến sau.
+
+## Production trên server này (Redis + MinIO chạy thật)
+
+- **restart: unless-stopped** cả 2 container → sống qua reboot (`docker compose up -d`).
+- **MinIO lifecycle TTL**: tự xóa `annotated/` cũ hơn `MINIO_TTL_DAYS` (mặc định **7 ngày**) → đĩa
+  không đầy. Set tự động khi worker khởi động (`storage.ensure_lifecycle`).
+- **Bound upload queue**: tối đa `MINIO_MAX_PENDING` (4096 ≈ 600MB/worker) ảnh chờ trong RAM; MinIO
+  chậm/sập thì bỏ ảnh + log thay vì phình RAM. Data MinIO ở named volume `minio-data` (persist).
+- ⚠️ **Bảo mật còn hở**: `rs-redis-test` mở `0.0.0.0:6380` **không password**. Nếu server có mạng
+  ngoài: bind `127.0.0.1:6380` (mọi thành phần chạy cùng server) hoặc thêm `requirepass` + sửa
+  `REDIS_URL`. MinIO console `:9001` có auth (admin/...) nhưng nên đổi pass mặc định khi public.
+
+## Chưa làm (đúng phạm vi — tầng AI/ngoài transport)
+
+- Tracking + georef (architecture §6, chỉ lane A), MinIO `annotated_ref`, msgpack `bands`
+  multispectral, orthomosaic/NDVI (lane B). Worker hiện trả bbox pixel thô, `geo`/`track_id`=null.

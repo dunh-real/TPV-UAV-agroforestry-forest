@@ -1,0 +1,85 @@
+"""Đóng/mở gói message envelope.
+
+Redis stream entry là field–value, value binary-safe ⇒ nhét thẳng bytes ảnh,
+KHÔNG base64. `meta`/`result` gói msgpack (gọn hơn JSON ~20-30%, giữ kiểu số).
+Tham chiếu: communication-transport-spec.md §3; architecture §8 (contract).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import msgpack
+
+
+def pack(obj: Any) -> bytes:
+    return msgpack.packb(obj, use_bin_type=True)
+
+
+def unpack(blob: bytes) -> Any:
+    return msgpack.unpackb(blob, raw=False)
+
+
+def build_req(
+    frame_id: str,
+    drone_id: str,
+    ts: float,
+    img_bytes: bytes,
+    gps: dict | None = None,
+    attitude: dict | None = None,
+    bands: str = "RGB",
+) -> dict[bytes, bytes]:
+    """Tạo dict field→value cho XADD frames:req (spec §3.1).
+
+    `attitude` nullable: tier telemetry thấp gửi None (architecture §7).
+    """
+    meta = {"gps": gps, "attitude": attitude, "bands": bands}
+    return {
+        b"frame_id": frame_id.encode(),
+        b"drone_id": drone_id.encode(),
+        b"ts": repr(ts).encode(),
+        b"meta": pack(meta),
+        b"img": img_bytes,
+    }
+
+
+def parse_req(fields: dict[bytes, bytes]) -> dict[str, Any]:
+    return {
+        "frame_id": fields[b"frame_id"].decode(),
+        "drone_id": fields[b"drone_id"].decode(),
+        "ts": float(fields[b"ts"]),
+        "meta": unpack(fields[b"meta"]),
+        "img": fields[b"img"],
+    }
+
+
+def build_res(
+    frame_id: str,
+    drone_id: str,
+    result: Any,
+    annotated_ref: str = "",
+    status: str = "ok",
+    err: str = "",
+) -> dict[bytes, bytes]:
+    """Tạo dict field→value cho XADD frames:res (spec §3.2).
+
+    KHÔNG nhét ảnh nặng — chỉ `annotated_ref` (key MinIO) khi có ảnh vẽ box.
+    """
+    return {
+        b"frame_id": frame_id.encode(),
+        b"drone_id": drone_id.encode(),
+        b"result": pack(result),
+        b"annotated_ref": annotated_ref.encode(),
+        b"status": status.encode(),
+        b"err": err.encode(),
+    }
+
+
+def parse_res(fields: dict[bytes, bytes]) -> dict[str, Any]:
+    return {
+        "frame_id": fields[b"frame_id"].decode(),
+        "drone_id": fields[b"drone_id"].decode(),
+        "result": unpack(fields[b"result"]),
+        "annotated_ref": fields[b"annotated_ref"].decode(),
+        "status": fields[b"status"].decode(),
+        "err": fields[b"err"].decode(),
+    }

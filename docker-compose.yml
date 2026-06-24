@@ -1,0 +1,42 @@
+# Hạ tầng test cho transport harness: Redis (message bus) + MinIO (ảnh durable).
+# KHÔNG đụng redis-prod (6379). Redis test ở 6380.
+#
+#   docker compose up -d
+#   docker compose down            # giữ data
+#   docker compose down -v         # xóa cả data
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: rs-redis-test
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 2gb --maxmemory-policy noeviction --appendonly no --requirepass admin123456
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "admin123456", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: rs-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # console
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin123456
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  minio-data:
