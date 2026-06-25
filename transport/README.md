@@ -29,33 +29,34 @@ docker compose up -d           # redis + minio
 | `config.py` | Tham số (REDIS_URL, stream, MAXLEN, batch…) qua env | §2, §9 |
 | `envelope.py` | Đóng/mở gói msgpack + bytes ảnh | §3, §8 |
 | `init_streams.py` | Tạo consumer group `cg:ai`, `cg:be` | §4.1 |
-| `producer.py` | Drone giả lập: ảnh → XADD `frames:req` | §4.2 |
-| `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `frames:res` → XACK; XAUTOCLAIM | §3, §4.3-4.4 |
+| `producer.py` | Drone giả lập: ảnh → XADD `dms:captures:ready` | §4.2 |
+| `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `dms:ai:results` → XACK; XAUTOCLAIM | §3, §4.3-4.4 |
 | `storage.py` | MinIO/S3: upload ảnh annotated async (thread pool), bucket auto-create | §4 |
-| (worker) event-gate + dedup | Lưu ảnh CHỈ khi có sự kiện + dedup `(drone,cls)`/cửa sổ qua Redis `SET NX EX` | §6.5, §11 |
-| `consumer.py` | BE: XREADGROUP `frames:res`, đo g2g latency, hiện `evidenceKey` | §10, §11 |
+| (worker) event-gate + dedup | Lưu ảnh khi có sự kiện; best-in-window: giữ ảnh **nét nhất** /`(drone,lớp,cửa sổ)`, Lua atomic | §6.5, §11 |
+| `consumer.py` | BE: XREADGROUP `dms:ai:results`, đo g2g latency, hiện `evidenceKey` | §10, §11 |
 | `loadtest.py` | Đội drone (thread) + BE collector: đo throughput/latency/drop dưới tải | §11 |
 
 ## Contract I/O của AI server
 
-Luồng giữ nguyên (ảnh bytes đi qua Redis, AI upload MinIO async). Output `frames:res`
+Luồng giữ nguyên (ảnh bytes đi qua Redis, AI upload MinIO async). Output `dms:ai:results`
 chuẩn hóa theo BE — worker chỉ trả kết quả phân tích, **gom nhóm/AlertEvent là việc của BE**.
 
 ```jsonc
-// NHẬN  frames:req  (giữ nguyên — bytes trong Redis cho hot-path infer nhanh)
+// NHẬN  dms:captures:ready  (giữ nguyên — bytes trong Redis cho hot-path infer nhanh)
 { "frame_id": "drone1-000123", "drone_id": "drone1", "ts": ...,
   "meta": <msgpack: gps, attitude, bands>, "img": <JPEG bytes> }
 
-// TRẢ  frames:res  (= dms:ai:results, schema theo BE)
+// TRẢ  dms:ai:results  (= dms:ai:results, schema theo BE)
 { "captureId": "drone1-000123", "droneId": "drone1", "status": "ok",
   "result": { "hasDetection": true,
               "detections": [ { "type": "blast", "confidence": 0.91, "bbox": [x,y,w,h] } ],
               "model": "yolo26x", "modelVersion": "coco-pretrained" },
-  "evidenceKey": "annotated/2026/.../drone1-000123.jpg",   // key ảnh MinIO (rỗng nếu không lưu)
+  "evidenceKey": "events/2026/.../droneZ/blast/356475310.jpg",  // key ảnh nét nhất cửa sổ (rỗng nếu không lưu)
   "err": "" }
 ```
 `type` = nhãn model (sau fine-tune = mã sâu/bệnh). `MODEL_NAME`/`MODEL_VERSION` qua env.
-Còn nợ để khớp đầy đủ luồng: idempotency `SET nx done:{captureId}` + stream `dms:ai:dead-letter`.
+**Độ tin cậy đã có**: idempotency `done:{captureId}` (chống emit trùng) + dead-letter
+`dms:ai:dead-letter` (job giao > `MAX_DELIVERIES` lần) + `XAUTOCLAIM` reclaim job treo.
 
 ## Chạy
 
@@ -74,9 +75,9 @@ Hoặc tách tiến trình (mỗi cái 1 terminal — `python -u` để log khô
 
 Giám sát Redis:
 ```bash
-docker exec rs-redis-test redis-cli XLEN frames:req
-docker exec rs-redis-test redis-cli XPENDING frames:req cg:ai
-docker exec rs-redis-test redis-cli XINFO GROUPS frames:req
+docker exec rs-redis-test redis-cli XLEN dms:captures:ready
+docker exec rs-redis-test redis-cli XPENDING dms:captures:ready cg:ai
+docker exec rs-redis-test redis-cli XINFO GROUPS dms:captures:ready
 ```
 
 ## Load test (ảnh thật COCO val2017, imgsz=960, MinIO bật)
@@ -111,17 +112,20 @@ Engine khóa GPU-arch + imgsz + batch ⇒ đổi card/imgsz phải export lại.
 (`dynamic=True batch=16`) build nặng, cần `workspace` lớn (≥32GB) — chưa cần vì multi-worker
 batch=1 đã đủ. Worker tự dựng lại consumer group khi Redis bị flush/restart (NOGROUP → recreate, spec §5).
 
-## Lưu ảnh: event-gate + dedup (chống phình đĩa)
+## Lưu ảnh: event-gate + dedup best-in-window (chống phình đĩa, giữ ảnh tốt nhất)
 
 Worker chỉ **lưu ảnh** khi có detection là **sự kiện** (`cls ∈ EVENT_CLASSES`, rỗng=mọi lớp;
-`conf ≥ EVENT_CONF`) và qua **dedup**: mỗi `(drone, cls)` lưu 1 ảnh / `DEDUP_WINDOW_S` giây
-(lock chung ở Redis `SET NX EX` nên nhiều worker không lưu trùng). **Metadata vẫn ra mọi frame**
-trên `frames:res` (kèm cờ `event` cho BE alert) — chỉ ẢNH bị lọc.
+`conf ≥ EVENT_CONF`). Dedup theo `(drone, lớp-chủ-đạo, cửa-sổ)`:
+- Mọi frame event trong cửa sổ trỏ về **cùng một `evidenceKey` ổn định** (`events/.../{window}.jpg`).
+- Chỉ ảnh **NÉT NHẤT** (điểm = variance of Laplacian) được upload/ghi đè vào key đó — không giữ
+  ảnh ĐẦU TIÊN (có thể mờ) như cách cũ. So sánh điểm bằng **Lua atomic** trên Redis nên nhiều
+  worker không ghi đè lẫn nhau sai.
+- **Metadata vẫn ra mọi frame** trên `dms:ai:results` (cờ `hasDetection`) → BE gom nhóm, đếm
+  `EvidenceCount`, dùng `evidenceKey` làm ảnh đại diện. Chỉ ẢNH bị lọc, không mất metadata.
 
-Đo thực (120 frame @10fps, window 5s): metadata **120/120**, ảnh MinIO **6** (giảm 20×). Tải thật
-(1 vật dai dẳng) → ~1 ảnh/cửa sổ thay vì ~38/s (~190×). Config: `EVENT_CLASSES`, `EVENT_CONF`
-(0.5), `DEDUP_WINDOW_S` (5). Bản đầy đủ dedup theo `track_id` (cần tầng tracking — chưa có);
-"chọn frame nét nhất trong cửa sổ" (variance of Laplacian) là cải tiến sau.
+Verify: gửi mờ→nét→mờ cùng cửa sổ → giữ đúng **1 ảnh nét nhất** (độ nét 3466 vs ảnh mờ 22), cả 3
+frame cùng `evidenceKey`. Config: `EVENT_CLASSES`, `EVENT_CONF` (0.5), `DEDUP_WINDOW_S` (5).
+Bản đầy đủ dedup theo `track_id` (cùng *vật thể*, cần tầng tracking — chưa có) là cải tiến sau.
 
 ## Production trên server này (Redis + MinIO chạy thật)
 

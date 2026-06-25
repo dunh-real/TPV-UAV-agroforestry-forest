@@ -5,10 +5,10 @@ trồng, sâu bệnh) → **Redis Streams** → **AI (YOLO26x)** → **Redis Str
 durable trên **MinIO**.
 
 ```
-Drone ──XADD──> [Redis: frames:req] ──XREADGROUP──> AI Worker ──XADD──> [Redis: frames:res] ──XREADGROUP──> BE
+Drone ──XADD──> [Redis: dms:captures:ready] ──XREADGROUP──> AI Worker ──XADD──> [Redis: dms:ai:results] ──XREADGROUP──> BE
  (cam)            ring-buffer MAXLEN                 YOLO26x GPU            metadata (msgpack)                  │
-                                                        │ ảnh vẽ box (chỉ khi có sự kiện + dedup)               │
-                                                        └──────────── PUT ──> MinIO <── GET (annotated_ref) ────┘
+                                                        │ ảnh vẽ box (sự kiện + dedup best-in-window)           │
+                                                        └──────────── PUT ──> MinIO <── GET (evidenceKey) ──────┘
 ```
 
 > Tài liệu thiết kế: [kiến trúc tổng](docs/drone-yolo-pipeline-architecture.md) · [đặc tả transport](docs/communication-transport-spec.md).
@@ -23,7 +23,9 @@ Drone ──XADD──> [Redis: frames:req] ──XREADGROUP──> AI Worker �
 - [x] Kết nối Redis Streams: consumer group, ack, `XAUTOCLAIM` khôi phục worker chết, tự dựng lại group khi Redis flush/restart.
 - [x] Chịu tải: trần ~282 fps / 4 worker; mục tiêu ~40 fps (4 drone) dư ~5×; backpressure `MAXLEN`, 0 drop dưới trần.
 - [x] Real-time: g2g **16–18 ms** dưới tải (đã phân rã từng chặng).
-- [x] Lưu trữ: MinIO + **event-gate + dedup** (giảm ~190× số ảnh lưu), bound RAM, lifecycle TTL.
+- [x] Lưu trữ: MinIO + event-gate + **dedup best-in-window** (giữ ảnh nét nhất), bound RAM, lifecycle TTL.
+- [x] Độ tin cậy: idempotency (`done:{captureId}`) + dead-letter (`dms:ai:dead-letter`) + reclaim job treo.
+- [x] Output `dms:ai:results` theo contract BE (captureId, hasDetection, detections, model/version, evidenceKey).
 - [x] AI: **YOLO26x** thật (TensorRT FP16 engine), 80 lớp COCO để test tốc độ/kết nối.
 
 **Chưa làm** (cần data + domain, hoặc ngoài đường nóng Lane A):
@@ -85,7 +87,7 @@ scripts/run_workers.sh
 .venv/bin/python -m transport.loadtest --src data/val2017 --drones 4 --fps 10 --secs 20
 
 # Giám sát Redis (pass đọc từ .env)
-docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS frames:req
+docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS dms:captures:ready
 ```
 
 ---
@@ -124,8 +126,8 @@ docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS frames:req
 
 Phần xử lý ~**hằng số 13ms** ở mọi tải; vượt trần thì latency nổ do **queue wait** (không phải xử lý chậm), và `MAXLEN` drop frame cũ — đúng thiết kế realtime. *(Chưa gồm mạng drone→server thực địa 5–30ms.)*
 
-### Lưu trữ — event-gate + dedup
-120 frame @10fps (window 5s): metadata ra BE **120/120**, ảnh lưu MinIO **6** (giảm **20×**). Tải thật 1 vật dai dẳng → ~1 ảnh/cửa sổ thay vì ~38/s (**~190×**).
+### Lưu trữ — event-gate + dedup best-in-window
+Mỗi `(drone, lớp, cửa sổ)` giữ **1 ảnh nét nhất** (variance of Laplacian, Lua atomic) thay vì ảnh đầu. Verify: mờ→nét→mờ cùng cửa sổ → giữ đúng ảnh nét (3466 vs mờ 22), 3 frame cùng `evidenceKey`. Metadata vẫn ra mọi frame → BE gom nhóm + đếm `EvidenceCount`.
 
 ---
 

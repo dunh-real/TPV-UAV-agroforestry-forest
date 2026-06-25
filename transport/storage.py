@@ -58,6 +58,14 @@ class ImageStore:
         day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return f"annotated/{day}/{frame_id}.jpg"
 
+    @staticmethod
+    def window_key(drone_id: str, cls: str, window_id: int) -> str:
+        """Key ỔN ĐỊNH cho 1 (drone, lớp, cửa sổ) — ảnh nét nhất ghi đè vào đây.
+        Cửa sổ sau = key khác → mỗi cửa sổ giữ 1 ảnh đại diện riêng.
+        """
+        day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
+        return f"events/{day}/{drone_id}/{cls}/{window_id}.jpg"
+
     def put_async(self, key: str, jpeg: bytes) -> bool:
         """Đẩy upload vào pool, trả ngay. Quá trần pending → BỎ (giữ RAM bounded), trả False.
         Lỗi upload chỉ log, không làm hỏng vòng infer.

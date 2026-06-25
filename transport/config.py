@@ -42,8 +42,9 @@ def _int(name: str, default: int) -> int:
 REDIS_URL = os.getenv("REDIS_URL", "redis://:changeme@localhost:6380/0")
 
 # --- Key / stream / consumer group (spec §2) -------------------------------
-REQ_STREAM = os.getenv("REQ_STREAM", "frames:req")
-RES_STREAM = os.getenv("RES_STREAM", "frames:res")
+# Tên stream theo BE (dms:*). Group là nội bộ AI → giữ cg:ai/cg:be.
+REQ_STREAM = os.getenv("REQ_STREAM", "dms:captures:ready")
+RES_STREAM = os.getenv("RES_STREAM", "dms:ai:results")
 CG_AI = os.getenv("CG_AI", "cg:ai")
 CG_BE = os.getenv("CG_BE", "cg:be")
 
@@ -66,7 +67,7 @@ CLAIM_MIN_IDLE_MS = _int("CLAIM_MIN_IDLE_MS", 30000)
 DONE_TTL_S = _int("DONE_TTL_S", 120)
 # Frame giao (delivery) quá số lần này mà chưa ack → đẩy sang dead-letter, thôi retry.
 MAX_DELIVERIES = _int("MAX_DELIVERIES", 5)
-DLQ_STREAM = os.getenv("DLQ_STREAM", "frames:dead-letter")
+DLQ_STREAM = os.getenv("DLQ_STREAM", "dms:ai:dead-letter")
 
 # --- MinIO / S3 (ảnh annotated durable, architecture §4/§8) -----------------
 # Endpoint + creds THẬT đặt trong .env (production: MinIO remote, vd s3.blogscloud.click).

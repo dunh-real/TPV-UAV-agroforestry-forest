@@ -68,15 +68,30 @@ def is_event(d) -> bool:
     return (not config.EVENT_CLASSES or d["cls"] in config.EVENT_CLASSES) and d["conf"] >= config.EVENT_CONF
 
 
-def dedup_fresh_classes(r, drone_id, event_dets) -> set:
-    """Trả các lớp sự kiện 'mới' trong cửa sổ (qua Redis SET NX EX) → cần lưu ảnh.
-    Lock chung ở Redis nên nhiều worker không lưu trùng cùng 1 sự kiện (architecture §6.5).
-    """
-    fresh = set()
-    for cls in {d["cls"] for d in event_dets}:
-        if r.set(f"dedup:{drone_id}:{cls}", b"1", nx=True, ex=config.DEDUP_WINDOW_S):
-            fresh.add(cls)
-    return fresh
+def sharpness(img) -> float:
+    """Độ nét = variance of Laplacian (cao = nét hơn). Dùng chọn ảnh TỐT NHẤT trong cửa sổ
+    thay vì giữ ảnh đầu tiên (architecture §6.5 "frame tốt nhất")."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+# Lua atomic: cập nhật điểm-best của key NẾU điểm mới cao hơn. Trả 1 nếu đây là ảnh nét
+# nhất tới giờ trong cửa sổ → caller upload (ghi đè ảnh cũ). Lần đầu đặt TTL = cửa sổ;
+# các lần sau KEEPTTL (cửa sổ không bị kéo dài). Đa worker an toàn nhờ chạy 1 lượt trên Redis.
+_BEST_LUA = """
+local cur = redis.call('GET', KEYS[1])
+if not cur then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return 1
+elseif tonumber(ARGV[1]) > tonumber(cur) then
+  redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL'); return 1
+end
+return 0
+"""
+
+
+def is_best_in_window(r, dedup_key: str, score: float) -> bool:
+    """True nếu `score` là điểm nét cao nhất tới giờ cho key (cửa sổ) — nên upload/ghi đè."""
+    return bool(r.eval(_BEST_LUA, 1, dedup_key, score, config.DEDUP_WINDOW_S))
 
 
 def drain_poison(r, claimed) -> list:
@@ -144,25 +159,26 @@ def process_batch(model, r, entries, store) -> int:
     )
     inf_ms = (time.time() - ti) * 1000.0 / len(imgs)  # phân bổ đều cho frame trong batch
 
-    for eid, req, res, dec in zip(ids, reqs, results, dec_ms):
+    for eid, req, res, dec, img in zip(ids, reqs, results, dec_ms, imgs):
         # Idempotency: captureId đã emit result trước đó (frame bị redeliver) → chỉ ack, bỏ qua.
         if r.exists(f"done:{req['frame_id']}"):
             r.xack(config.REQ_STREAM, config.CG_AI, eid)
             continue
         dets = to_detections(res)
         events = [d for d in dets if is_event(d)]
-        # LƯU ảnh chỉ khi: có sự kiện + dedup (1 ảnh/(drone,cls)/cửa sổ) — architecture §6.5.
-        # Metadata vẫn ra mọi frame; chỉ ẢNH bị lọc để không phình đĩa.
+        # LƯU ảnh chỉ khi có sự kiện. Dedup theo (drone, lớp chủ đạo, cửa sổ): MỌI frame event
+        # trỏ về cùng evidenceKey ổn định; chỉ ảnh NÉT NHẤT trong cửa sổ được upload/ghi đè vào
+        # đó (architecture §6.5 "frame tốt nhất"). BE gom nhóm + đếm EvidenceCount từ result.
         ta = time.time()
-        annotated_ref = ""
+        evidence_key = ""
         if store is not None and events:
-            fresh = dedup_fresh_classes(r, req["drone_id"], events)
-            if fresh:
-                key = store.key_for(req["frame_id"])
-                ok, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, 85])
-                if ok:
-                    store.put_async(key, buf.tobytes())
-                    annotated_ref = key
+            top = max(events, key=lambda d: d["conf"])  # lớp conf cao nhất làm đại diện
+            win = int(req["ts"] // config.DEDUP_WINDOW_S)
+            evidence_key = store.window_key(req["drone_id"], top["cls"], win)
+            if is_best_in_window(r, f"best:{req['drone_id']}:{top['cls']}:{win}", sharpness(img)):
+                okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if okimg:
+                    store.put_async(evidence_key, buf.tobytes())
         ann_ms = (time.time() - ta) * 1000.0
         # Output theo BE: hasDetection + detections[{type,confidence,bbox}] + model/version.
         # `ts`/`timing` giữ cho đo latency/observability (BE bỏ qua field thừa).
@@ -181,7 +197,7 @@ def process_batch(model, r, entries, store) -> int:
         r.xadd(
             config.RES_STREAM,
             envelope.build_res(
-                req["frame_id"], result_payload, evidence_key=annotated_ref,
+                req["frame_id"], result_payload, evidence_key=evidence_key,
                 drone_id=req["drone_id"],
             ),
             maxlen=config.RES_MAXLEN, approximate=True,
@@ -211,7 +227,7 @@ def main() -> None:
             store = storage.get_store()
             print(f"[worker {name}] MinIO {config.MINIO_ENDPOINT} bucket={config.MINIO_BUCKET} ready")
         except Exception as e:  # MinIO chưa tới được → degrade: bỏ ảnh annotated, vẫn chạy
-            print(f"[worker {name}] MinIO unavailable ({e}); annotated_ref sẽ rỗng")
+            print(f"[worker {name}] MinIO unavailable ({e}); evidenceKey sẽ rỗng")
 
     print(f"[worker {name}] ready. consuming {config.REQ_STREAM} group {config.CG_AI}")
 
