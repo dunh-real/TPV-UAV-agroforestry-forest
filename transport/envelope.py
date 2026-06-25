@@ -53,33 +53,35 @@ def parse_req(fields: dict[bytes, bytes]) -> dict[str, Any]:
 
 
 def build_res(
-    frame_id: str,
-    drone_id: str,
+    capture_id: str,
     result: Any,
-    annotated_ref: str = "",
+    evidence_key: str = "",
     status: str = "ok",
     err: str = "",
+    drone_id: str = "",
 ) -> dict[bytes, bytes]:
-    """Tạo dict field→value cho XADD frames:res (spec §3.2).
+    """Tạo dict field→value cho XADD frames:res (dms:ai:results) — schema theo BE.
 
-    KHÔNG nhét ảnh nặng — chỉ `annotated_ref` (key MinIO) khi có ảnh vẽ box.
+    `result` (msgpack): hasDetection, detections[{type,confidence,bbox}], model, modelVersion.
+    `evidence_key` = key ảnh bằng chứng trên MinIO (rỗng nếu không lưu). KHÔNG nhét ảnh nặng.
+    BE gom nhóm → AlertEvent (dedup/severity là việc của BE, không phải worker).
     """
     return {
-        b"frame_id": frame_id.encode(),
-        b"drone_id": drone_id.encode(),
-        b"result": pack(result),
-        b"annotated_ref": annotated_ref.encode(),
+        b"captureId": capture_id.encode(),
+        b"droneId": drone_id.encode(),
         b"status": status.encode(),
+        b"result": pack(result),
+        b"evidenceKey": evidence_key.encode(),
         b"err": err.encode(),
     }
 
 
 def parse_res(fields: dict[bytes, bytes]) -> dict[str, Any]:
     return {
-        "frame_id": fields[b"frame_id"].decode(),
-        "drone_id": fields[b"drone_id"].decode(),
-        "result": unpack(fields[b"result"]),
-        "annotated_ref": fields[b"annotated_ref"].decode(),
+        "captureId": fields[b"captureId"].decode(),
+        "droneId": fields.get(b"droneId", b"").decode(),
         "status": fields[b"status"].decode(),
+        "result": unpack(fields[b"result"]),
+        "evidenceKey": fields[b"evidenceKey"].decode(),
         "err": fields[b"err"].decode(),
     }

@@ -33,8 +33,29 @@ docker compose up -d           # redis + minio
 | `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `frames:res` → XACK; XAUTOCLAIM | §3, §4.3-4.4 |
 | `storage.py` | MinIO/S3: upload ảnh annotated async (thread pool), bucket auto-create | §4 |
 | (worker) event-gate + dedup | Lưu ảnh CHỈ khi có sự kiện + dedup `(drone,cls)`/cửa sổ qua Redis `SET NX EX` | §6.5, §11 |
-| `consumer.py` | BE: XREADGROUP `frames:res`, đo g2g latency, hiện `annotated_ref` | §10, §11 |
+| `consumer.py` | BE: XREADGROUP `frames:res`, đo g2g latency, hiện `evidenceKey` | §10, §11 |
 | `loadtest.py` | Đội drone (thread) + BE collector: đo throughput/latency/drop dưới tải | §11 |
+
+## Contract I/O của AI server
+
+Luồng giữ nguyên (ảnh bytes đi qua Redis, AI upload MinIO async). Output `frames:res`
+chuẩn hóa theo BE — worker chỉ trả kết quả phân tích, **gom nhóm/AlertEvent là việc của BE**.
+
+```jsonc
+// NHẬN  frames:req  (giữ nguyên — bytes trong Redis cho hot-path infer nhanh)
+{ "frame_id": "drone1-000123", "drone_id": "drone1", "ts": ...,
+  "meta": <msgpack: gps, attitude, bands>, "img": <JPEG bytes> }
+
+// TRẢ  frames:res  (= dms:ai:results, schema theo BE)
+{ "captureId": "drone1-000123", "droneId": "drone1", "status": "ok",
+  "result": { "hasDetection": true,
+              "detections": [ { "type": "blast", "confidence": 0.91, "bbox": [x,y,w,h] } ],
+              "model": "yolo26x", "modelVersion": "coco-pretrained" },
+  "evidenceKey": "annotated/2026/.../drone1-000123.jpg",   // key ảnh MinIO (rỗng nếu không lưu)
+  "err": "" }
+```
+`type` = nhãn model (sau fine-tune = mã sâu/bệnh). `MODEL_NAME`/`MODEL_VERSION` qua env.
+Còn nợ để khớp đầy đủ luồng: idempotency `SET nx done:{captureId}` + stream `dms:ai:dead-letter`.
 
 ## Chạy
 

@@ -59,12 +59,13 @@ def main() -> None:
             lat_max = max(lat_max, lat)
             if res["status"] == "ok":
                 dets = res["result"]["detections"]
-                top = ", ".join(f"{d['cls']}:{d['conf']:.2f}" for d in dets[:4])
-                ref = res["annotated_ref"]
+                top = ", ".join(f"{d['type']}:{d['confidence']:.2f}" for d in dets[:4])
+                ref = res["evidenceKey"]
                 ref_s = f" img={ref}" if ref else ""
-                print(f"[be] {res['frame_id']} n={len(dets)} [{top}]{ref_s}")
+                flag = " 🔔" if res["result"].get("hasDetection") else ""
+                print(f"[be] {res['captureId']} n={len(dets)} [{top}]{ref_s}{flag}")
             else:
-                print(f"[be] {res['frame_id']} ERROR: {res['err']}")
+                print(f"[be] {res['captureId']} ERROR: {res['err']}")
             r.xack(config.RES_STREAM, config.CG_BE, eid)
 
         if time.time() - last_log >= 2.0 and n:

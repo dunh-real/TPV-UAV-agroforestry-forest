@@ -90,6 +90,9 @@ DEDUP_WINDOW_S = _int("DEDUP_WINDOW_S", 5)
 
 # --- Model -----------------------------------------------------------------
 MODEL_PATH = os.getenv("MODEL_PATH", "weights/yolo26x.pt")
+# Đưa vào output để BE truy vết model nào sinh kết quả (architecture: model + version).
+MODEL_NAME = os.getenv("MODEL_NAME", os.path.splitext(os.path.basename(MODEL_PATH))[0])
+MODEL_VERSION = os.getenv("MODEL_VERSION", "coco-pretrained")  # đổi khi fine-tune nhãn viễn thám
 DEVICE = os.getenv("DEVICE", "0")  # GPU index hoặc "cpu"
 CONF = float(os.getenv("CONF", "0.25"))
 IMGSZ = _int("IMGSZ", 960)

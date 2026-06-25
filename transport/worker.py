@@ -95,7 +95,7 @@ def process_batch(model, r, entries, store) -> int:
             r.xadd(
                 config.RES_STREAM,
                 envelope.build_res(
-                    fields.get(b"frame_id", b"?").decode(), "", [], status="error", err=str(e)
+                    fields.get(b"frame_id", b"?").decode(), {}, status="error", err=str(e)
                 ),
                 maxlen=config.RES_MAXLEN, approximate=True,
             )
@@ -132,15 +132,25 @@ def process_batch(model, r, entries, store) -> int:
                     store.put_async(key, buf.tobytes())
                     annotated_ref = key
         ann_ms = (time.time() - ta) * 1000.0
-        # `ts` gốc + timing per-stage để BE đo g2g + phân rã (observability §12).
-        # `event` = frame có vật sự kiện (cho BE alert, mọi frame — độc lập với dedup lưu ảnh).
+        # Output theo BE: hasDetection + detections[{type,confidence,bbox}] + model/version.
+        # `ts`/`timing` giữ cho đo latency/observability (BE bỏ qua field thừa).
         timing = {"wait": (t_recv - req["ts"]) * 1000.0, "dec": dec, "inf": inf_ms, "ann": ann_ms}
-        result_payload = {"detections": dets, "n": len(dets), "ts": req["ts"],
-                          "event": bool(events), "timing": timing}
+        detections_out = [
+            {"type": d["cls"], "confidence": d["conf"], "bbox": d["bbox"]} for d in dets
+        ]
+        result_payload = {
+            "hasDetection": bool(events),
+            "detections": detections_out,
+            "model": config.MODEL_NAME,
+            "modelVersion": config.MODEL_VERSION,
+            "ts": req["ts"],
+            "timing": timing,
+        }
         r.xadd(
             config.RES_STREAM,
             envelope.build_res(
-                req["frame_id"], req["drone_id"], result_payload, annotated_ref=annotated_ref
+                req["frame_id"], result_payload, evidence_key=annotated_ref,
+                drone_id=req["drone_id"],
             ),
             maxlen=config.RES_MAXLEN, approximate=True,
         )

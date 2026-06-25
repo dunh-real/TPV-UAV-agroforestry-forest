@@ -70,7 +70,7 @@ def collector_thread(stats: dict, stop: threading.Event):
                 if tm:
                     for k in segs:
                         segs[k].append(tm[k])
-                if res["annotated_ref"]:
+                if res["evidenceKey"]:
                     n_img += 1
             else:
                 n_err += 1
