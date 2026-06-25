@@ -79,6 +79,34 @@ def dedup_fresh_classes(r, drone_id, event_dets) -> set:
     return fresh
 
 
+def drain_poison(r, claimed) -> list:
+    """Tách entry đã giao quá MAX_DELIVERIES lần (job độc/treo) → đẩy dead-letter + ack,
+    thôi retry. Trả lại danh sách entry còn xử lý được. Chỉ chạy ở nhánh XAUTOCLAIM.
+    """
+    if not claimed:
+        return claimed
+    delivered = {
+        p["message_id"]: p["times_delivered"]
+        for p in r.xpending_range(config.REQ_STREAM, config.CG_AI,
+                                  min="-", max="+", count=len(claimed) * 2)
+    }
+    keep = []
+    for eid, fields in claimed:
+        n = delivered.get(eid, 1)
+        if n > config.MAX_DELIVERIES:
+            cap = fields.get(b"frame_id", b"?").decode()
+            r.xadd(config.DLQ_STREAM, {
+                b"captureId": cap.encode(), b"droneId": fields.get(b"drone_id", b"").decode().encode(),
+                b"reason": f"exceeded {config.MAX_DELIVERIES} deliveries".encode(),
+                b"deliveries": str(n).encode(),
+            }, maxlen=10000, approximate=True)
+            r.xack(config.REQ_STREAM, config.CG_AI, eid)
+            print(f"[worker] dead-letter {cap} (giao {n} lần > {config.MAX_DELIVERIES})")
+        else:
+            keep.append((eid, fields))
+    return keep
+
+
 def process_batch(model, r, entries, store) -> int:
     """entries: list (id_bytes, fields). Trả số frame xử lý."""
     t_recv = time.time()  # mốc worker NHẬN batch (đo wait = xếp hàng + transport req)
@@ -117,6 +145,10 @@ def process_batch(model, r, entries, store) -> int:
     inf_ms = (time.time() - ti) * 1000.0 / len(imgs)  # phân bổ đều cho frame trong batch
 
     for eid, req, res, dec in zip(ids, reqs, results, dec_ms):
+        # Idempotency: captureId đã emit result trước đó (frame bị redeliver) → chỉ ack, bỏ qua.
+        if r.exists(f"done:{req['frame_id']}"):
+            r.xack(config.REQ_STREAM, config.CG_AI, eid)
+            continue
         dets = to_detections(res)
         events = [d for d in dets if is_event(d)]
         # LƯU ảnh chỉ khi: có sự kiện + dedup (1 ảnh/(drone,cls)/cửa sổ) — architecture §6.5.
@@ -154,6 +186,8 @@ def process_batch(model, r, entries, store) -> int:
             ),
             maxlen=config.RES_MAXLEN, approximate=True,
         )
+        # Đánh dấu đã emit (sau XADD → ưu tiên "trùng nhưng BE dedup" hơn "mất"). TTL tự hết.
+        r.set(f"done:{req['frame_id']}", b"1", ex=config.DONE_TTL_S)
         r.xack(config.REQ_STREAM, config.CG_AI, eid)
     return len(ids)
 
@@ -189,6 +223,7 @@ def main() -> None:
                 config.REQ_STREAM, config.CG_AI, name,
                 min_idle_time=config.CLAIM_MIN_IDLE_MS, start_id="0-0", count=config.READ_COUNT,
             )
+            claimed = drain_poison(r, claimed)
             if claimed:
                 total += process_batch(model, r, claimed, store)
         except redis.exceptions.ResponseError:

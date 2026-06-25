@@ -61,6 +61,13 @@ READ_BLOCK_MS = _int("READ_BLOCK_MS", 20)
 # XAUTOCLAIM: coi worker chết sau ngần này ms không ack.
 CLAIM_MIN_IDLE_MS = _int("CLAIM_MIN_IDLE_MS", 30000)
 
+# --- Độ tin cậy: idempotency + dead-letter (spec §8, luồng AI) --------------
+# TTL key done:{captureId} — chặn emit result trùng khi frame bị redeliver.
+DONE_TTL_S = _int("DONE_TTL_S", 120)
+# Frame giao (delivery) quá số lần này mà chưa ack → đẩy sang dead-letter, thôi retry.
+MAX_DELIVERIES = _int("MAX_DELIVERIES", 5)
+DLQ_STREAM = os.getenv("DLQ_STREAM", "frames:dead-letter")
+
 # --- MinIO / S3 (ảnh annotated durable, architecture §4/§8) -----------------
 # Endpoint + creds THẬT đặt trong .env (production: MinIO remote, vd s3.blogscloud.click).
 # Default dưới đây chỉ là placeholder cho dev local (KHÔNG phải secret).
