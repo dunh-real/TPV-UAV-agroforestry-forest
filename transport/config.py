@@ -7,6 +7,30 @@ from __future__ import annotations
 import os
 
 
+def _load_dotenv() -> None:
+    """Nạp `.env` ở gốc dự án (nếu có) → secrets thật KHÔNG nằm trong code/git.
+    Biến set sẵn ở môi trường được ưu tiên (setdefault). Giá trị lấy nguyên dòng sau
+    dấu `=` (không tách comment giữa dòng) để giữ password có ký tự đặc biệt.
+    """
+    root = os.path.join(os.path.dirname(__file__), os.pardir)
+    path = os.path.join(root, ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            os.environ.setdefault(k, v)
+
+
+_load_dotenv()
+
+
 def _int(name: str, default: int) -> int:
     return int(os.getenv(name, default))
 

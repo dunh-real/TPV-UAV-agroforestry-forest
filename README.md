@@ -63,9 +63,12 @@ docker compose up -d
 mkdir -p data && cd data && curl -sLO http://images.cocodataset.org/zips/val2017.zip && unzip -q val2017.zip
 ```
 
-### Kết nối (mặc định)
-- Redis: `redis://:admin123456@localhost:6380/0` (password đã bật).
-- MinIO: `localhost:9000` (console `:9001`), `admin` / `admin123456`, bucket `images`.
+### Kết nối — secrets qua `.env` (KHÔNG commit)
+Copy `.env.example` → `.env` rồi điền giá trị thật; `config.py` tự nạp lúc import. `.env` đã
+được gitignore nên secret không lọt git.
+- **Redis**: mặc định local `redis://:<pass>@localhost:6380/0` (password bật). Đổi qua `REDIS_URL`.
+- **MinIO**: trỏ endpoint thật qua `.env` (vd `MINIO_ENDPOINT=s3.blogscloud.click`, `MINIO_SECURE=1`),
+  bucket `images` tự tạo. Không có `.env` thì fallback local `localhost:9000`.
 
 ---
 
@@ -133,7 +136,7 @@ Phần xử lý ~**hằng số 13ms** ở mọi tải; vượt trần thì laten
 | Redis | `REDIS_URL` | `redis://:admin123456@localhost:6380/0` |
 | Backpressure | `REQ_MAXLEN` · `READ_COUNT` · `READ_BLOCK_MS` | 2000 · 16 · 20 |
 | Model | `MODEL_PATH` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · 960 · FP16 · 0.25 |
-| MinIO | `MINIO_ENDPOINT` · `MINIO_BUCKET` | `localhost:9000` · `images` |
+| MinIO | `MINIO_ENDPOINT` · `MINIO_SECURE` · `MINIO_BUCKET` | (qua `.env`) · `images` |
 | MinIO hardening | `MINIO_TTL_DAYS` · `MINIO_MAX_PENDING` | 7 · 4096 |
 | Event/dedup | `EVENT_CLASSES` · `EVENT_CONF` · `DEDUP_WINDOW_S` | (mọi lớp) · 0.5 · 5 |
 
