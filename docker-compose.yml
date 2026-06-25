@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     ports:
       - "6380:6379"
-    command: redis-server --maxmemory 2gb --maxmemory-policy noeviction --appendonly no --requirepass admin123456
+    command: redis-server --maxmemory 8gb --maxmemory-policy noeviction --appendonly no --requirepass admin123456
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "admin123456", "ping"]
       interval: 10s
