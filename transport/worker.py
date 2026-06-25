@@ -1,7 +1,7 @@
 """AI worker — YOLO26x. XREADGROUP → decode → infer batch → XADD frames:res → XACK.
 
 Stateless detection (architecture §3, §9): nhiều worker chia chung 1 GPU qua consumer
-group; micro-batch theo ngân sách BLOCK ms. XAUTOCLAIM nhặt lại frame của worker chết
+group; micro-batch theo ngân sách BLOCK ms. XPENDING+XCLAIM nhặt lại frame của worker chết
 (spec §4.4). Output bbox pixel thô theo contract §8 (tracking/georef là stage sau).
 
 Dùng:
@@ -92,6 +92,20 @@ return 0
 def is_best_in_window(r, dedup_key: str, score: float) -> bool:
     """True nếu `score` là điểm nét cao nhất tới giờ cho key (cửa sổ) — nên upload/ghi đè."""
     return bool(r.eval(_BEST_LUA, 1, dedup_key, score, config.DEDUP_WINDOW_S))
+
+
+def reclaim_pending(r, name) -> list:
+    """Nhặt lại entry pending idle quá lâu (worker chết) bằng XPENDING + XCLAIM thay cho
+    XAUTOCLAIM — để tương thích cả Redis < 6.2 (vd 6.0.16). Trả list (id, fields).
+    Lọc idle ở client (IDLE của XPENDING cũng chỉ có từ 6.2); XCLAIM còn chốt min-idle ở server.
+    """
+    pend = r.xpending_range(config.REQ_STREAM, config.CG_AI,
+                            min="-", max="+", count=config.READ_COUNT)
+    stale = [p["message_id"] for p in pend
+             if p["time_since_delivered"] >= config.CLAIM_MIN_IDLE_MS]
+    if not stale:
+        return []
+    return r.xclaim(config.REQ_STREAM, config.CG_AI, name, config.CLAIM_MIN_IDLE_MS, stale)
 
 
 def drain_poison(r, claimed) -> list:
@@ -233,12 +247,9 @@ def main() -> None:
 
     total, last_log = 0, time.time()
     while not _stop:
-        # Trước hết nhặt lại frame pending của worker chết (spec §4.4).
+        # Trước hết nhặt lại frame pending của worker chết (XPENDING+XCLAIM, spec §4.4).
         try:
-            _, claimed, _ = r.xautoclaim(
-                config.REQ_STREAM, config.CG_AI, name,
-                min_idle_time=config.CLAIM_MIN_IDLE_MS, start_id="0-0", count=config.READ_COUNT,
-            )
+            claimed = reclaim_pending(r, name)
             claimed = drain_poison(r, claimed)
             if claimed:
                 total += process_batch(model, r, claimed, store)

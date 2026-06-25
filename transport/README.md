@@ -30,7 +30,7 @@ docker compose up -d           # redis + minio
 | `envelope.py` | Đóng/mở gói msgpack + bytes ảnh | §3, §8 |
 | `init_streams.py` | Tạo consumer group `cg:ai`, `cg:be` | §4.1 |
 | `producer.py` | Drone giả lập: ảnh → XADD `dms:captures:ready` | §4.2 |
-| `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `dms:ai:results` → XACK; XAUTOCLAIM | §3, §4.3-4.4 |
+| `worker.py` | **YOLO26x**: XREADGROUP → decode → infer → (vẽ box + upload MinIO async nếu có detection) → XADD `dms:ai:results` → XACK; reclaim XPENDING+XCLAIM | §3, §4.3-4.4 |
 | `storage.py` | MinIO/S3: upload ảnh annotated async (thread pool), bucket auto-create | §4 |
 | (worker) event-gate + dedup | Lưu ảnh khi có sự kiện; best-in-window: giữ ảnh **nét nhất** /`(drone,lớp,cửa sổ)`, Lua atomic | §6.5, §11 |
 | `consumer.py` | BE: XREADGROUP `dms:ai:results`, đo g2g latency, hiện `evidenceKey` | §10, §11 |
@@ -56,7 +56,7 @@ chuẩn hóa theo BE — worker chỉ trả kết quả phân tích, **gom nhóm
 ```
 `type` = nhãn model (sau fine-tune = mã sâu/bệnh). `MODEL_NAME`/`MODEL_VERSION` qua env.
 **Độ tin cậy đã có**: idempotency `done:{captureId}` (chống emit trùng) + dead-letter
-`dms:ai:dead-letter` (job giao > `MAX_DELIVERIES` lần) + `XAUTOCLAIM` reclaim job treo.
+`dms:ai:dead-letter` (job giao > `MAX_DELIVERIES` lần) + `XPENDING`+`XCLAIM` reclaim job treo (hợp Redis 6.0).
 
 ## Chạy
 
@@ -105,7 +105,7 @@ N=4 scripts/run_workers.sh    # 4 worker (chỉ khi tải > ~100fps)
 ### Cấu hình khuyến nghị: ~4 drone (≈40fps tổng) → **2 worker, mỗi card 1**
 Đo thực (4 drone × 10fps): 1 worker g2g p50=31ms; **2 worker p50=18ms** (wait 19.6→8ms), đều 0 drop.
 Chọn 2 không vì tốc độ (1 đã thừa, trần ~111fps) mà vì: (a) latency thấp hơn 42% do song song hóa
-burst, (b) **dự phòng** — 1 worker chết là đứng pipeline; 2 worker thì cái kia chạy tiếp + XAUTOCLAIM
+burst, (b) **dự phòng** — 1 worker chết là đứng pipeline; 2 worker thì cái kia chạy tiếp + reclaim
 nhặt frame pending, (c) cách ly 2 GPU. VRAM ~0.4–2GB/worker nên chi phí ~0. Đừng dùng 4 worker cho
 4 drone (thừa, tốn VRAM vô ích).
 Engine khóa GPU-arch + imgsz + batch ⇒ đổi card/imgsz phải export lại. Engine dynamic batch

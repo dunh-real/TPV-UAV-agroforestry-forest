@@ -21,7 +21,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
 
 **Lane A (real-time, drone→detect→alert) — tầng transport + AI server: ĐÃ XONG, đo kiểm bằng tải thật.**
 
-- [x] **Kết nối** Redis Streams: consumer group, ack, `XAUTOCLAIM` reclaim worker chết, tự dựng lại group khi Redis flush.
+- [x] **Kết nối** Redis Streams: consumer group, ack, reclaim worker chết (`XPENDING`+`XCLAIM`, hợp Redis ≥5), tự dựng lại group khi Redis flush.
 - [x] **Chịu tải**: trần ~282 fps / 4 worker; mục tiêu ~40 fps (4 drone) dư ~5×; backpressure `MAXLEN`, 0 drop dưới trần.
 - [x] **Real-time**: g2g 16–18 ms dưới tải (đã phân rã từng chặng).
 - [x] **Lưu trữ**: MinIO + event-gate + **dedup best-in-window** (giữ ảnh nét nhất), bound RAM, lifecycle TTL.
@@ -73,7 +73,7 @@ nên GET-per-frame quá đắt (đo được **66 ms**). AI upload ảnh lên Mi
 | CPU / RAM | 16 core / 251GB |
 | Python | **3.12.10** qua `uv`, venv `.venv/` |
 | Stack | torch 2.12.1+cu130, ultralytics 8.4.75, TensorRT 11.1, redis-py, msgpack, minio |
-| Hạ tầng | Redis local (6380, có password) + MinIO **remote** `s3.blogscloud.click` |
+| Hạ tầng | Redis + MinIO **remote** qua `.env` (Tailscale `100.x` / `s3.blogscloud.click`); compose local là dev fallback |
 
 ### Cài đặt
 ```bash
@@ -136,7 +136,7 @@ docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS dms:captur
 | 4× engine | 350 fps | 19% | 282 | 1439 ms (quá trần → queue nổ) |
 
 **Khuyến nghị ~4 drone (≈40 fps): 2 worker engine, mỗi GPU 1** — đo p50=18ms, 0 drop. Chọn 2 vì
-latency thấp + **dự phòng** (1 chết thì cái kia gánh + XAUTOCLAIM), không vì tốc độ (1 worker đã thừa).
+latency thấp + **dự phòng** (1 chết thì cái kia gánh + reclaim), không vì tốc độ (1 worker đã thừa).
 
 ### Phân rã tổng time pipeline (p50, ms)
 | chặng | ms | ghi chú |
