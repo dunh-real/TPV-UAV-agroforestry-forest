@@ -97,6 +97,7 @@ def process_batch(model, r, entries, store) -> int:
                 envelope.build_res(
                     fields.get(b"frame_id", b"?").decode(), "", [], status="error", err=str(e)
                 ),
+                maxlen=config.RES_MAXLEN, approximate=True,
             )
             r.xack(config.REQ_STREAM, config.CG_AI, eid)
             continue
@@ -141,6 +142,7 @@ def process_batch(model, r, entries, store) -> int:
             envelope.build_res(
                 req["frame_id"], req["drone_id"], result_payload, annotated_ref=annotated_ref
             ),
+            maxlen=config.RES_MAXLEN, approximate=True,
         )
         r.xack(config.REQ_STREAM, config.CG_AI, eid)
     return len(ids)

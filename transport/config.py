@@ -25,6 +25,10 @@ CG_BE = os.getenv("CG_BE", "cg:be")
 # --- Backpressure / batch (spec §9) ----------------------------------------
 # MAXLEN ~ N : ring-buffer cho frames:req. N ≈ Σdrone × fps × giây_giữ.
 REQ_MAXLEN = _int("REQ_MAXLEN", 2000)
+# MAXLEN cho frames:res — XACK của BE KHÔNG xóa entry khỏi stream, chỉ MAXLEN/XTRIM mới
+# xóa ⇒ thiếu trần thì frames:res phình vô hạn (entry nhẹ ~1-5KB nhưng tích lũy theo thời
+# gian). Default 2× REQ_MAXLEN: dư đệm cho BE bắt kịp lúc burst/restart, ~8MB ở 4000 entry.
+RES_MAXLEN = _int("RES_MAXLEN", 2 * REQ_MAXLEN)
 # COUNT: số entry tối đa mỗi XREADGROUP (micro-batch).
 READ_COUNT = _int("READ_COUNT", 16)
 # BLOCK ms: ngân sách gom batch, latency-first.
