@@ -36,9 +36,10 @@ def _int(name: str, default: int) -> int:
 
 
 # --- Kết nối ---------------------------------------------------------------
-# Mặc định trỏ vào Redis test riêng (container rs-redis-test, host:6380),
-# KHÔNG đụng redis-prod (6379, có auth).
-REDIS_URL = os.getenv("REDIS_URL", "redis://:admin123456@localhost:6380/0")
+# Password thật đặt trong .env (REDIS_URL). Default chỉ là placeholder "changeme"
+# (khớp default ${REDIS_PASSWORD:-changeme} trong docker-compose) — KHÔNG phải secret.
+# Redis test ở host:6380, KHÔNG đụng redis-prod (6379).
+REDIS_URL = os.getenv("REDIS_URL", "redis://:changeme@localhost:6380/0")
 
 # --- Key / stream / consumer group (spec §2) -------------------------------
 REQ_STREAM = os.getenv("REQ_STREAM", "frames:req")
@@ -61,11 +62,11 @@ READ_BLOCK_MS = _int("READ_BLOCK_MS", 20)
 CLAIM_MIN_IDLE_MS = _int("CLAIM_MIN_IDLE_MS", 30000)
 
 # --- MinIO / S3 (ảnh annotated durable, architecture §4/§8) -----------------
-# Mặc định LOCAL (compose). Máy MinIO 192.168.100.190 hiện không cùng mạng —
-# khi thông thì đặt MINIO_ENDPOINT=192.168.100.190:9000.
+# Endpoint + creds THẬT đặt trong .env (production: MinIO remote, vd s3.blogscloud.click).
+# Default dưới đây chỉ là placeholder cho dev local (KHÔNG phải secret).
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin123456")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "changeme")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "images")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "0") == "1"  # UseSSL
 # Lifecycle: tự xóa ảnh annotated cũ hơn N ngày (chống đầy đĩa). 0 = không đặt TTL.

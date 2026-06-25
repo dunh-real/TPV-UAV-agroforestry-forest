@@ -8,10 +8,9 @@ model thật YOLO26x** (không phải echo §11). Chạy được end-to-end nga
 - Python **3.12.10** qua `uv`, venv ở `.venv/` (torch 2.12.1+cu130, ultralytics 8.4.75).
 - GPU: 2× RTX PRO 6000 Blackwell (sm_120). YOLO26x ~9.6ms/frame @1080p fp32.
 - Hạ tầng qua **docker-compose** (`docker compose up -d`):
-  - Redis test: container `rs-redis-test` ở **host:6380** (KHÔNG đụng `redis-prod` 6379).
-  - MinIO LOCAL: container `rs-minio`, API **:9000** + console **:9001**, creds `admin/admin123456`,
-    bucket `images`. (Máy MinIO 192.168.100.190 ở mạng khác — khi thông thì set
-    `MINIO_ENDPOINT=192.168.100.190:9000` và bỏ service minio trong compose.)
+  - Redis test: container `rs-redis-test` ở **host:6380**, password qua `.env` (`REDIS_PASSWORD`).
+  - MinIO: production trỏ endpoint remote qua `.env` (`MINIO_ENDPOINT`, `MINIO_SECURE=1`), bucket
+    `images`. Container `rs-minio` local chỉ là dev fallback (giờ thừa). Secrets đều trong `.env`.
 - Weights: `weights/yolo26x.pt` + `weights/yolo26x.engine` (TensorRT FP16). Ảnh mẫu: `samples/`.
 
 Cài lại từ đầu nếu cần:

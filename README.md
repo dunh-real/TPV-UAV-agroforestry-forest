@@ -84,8 +84,8 @@ scripts/run_workers.sh
 # Load test với ảnh thật COCO (đội drone + BE collector)
 .venv/bin/python -m transport.loadtest --src data/val2017 --drones 4 --fps 10 --secs 20
 
-# Giám sát Redis
-docker exec rs-redis-test redis-cli -a admin123456 XINFO GROUPS frames:req
+# Giám sát Redis (pass đọc từ .env)
+docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS frames:req
 ```
 
 ---
@@ -133,7 +133,7 @@ Phần xử lý ~**hằng số 13ms** ở mọi tải; vượt trần thì laten
 
 | Nhóm | Biến | Mặc định |
 |---|---|---|
-| Redis | `REDIS_URL` | `redis://:admin123456@localhost:6380/0` |
+| Redis | `REDIS_URL` · `REDIS_PASSWORD` | (qua `.env`) |
 | Backpressure | `REQ_MAXLEN` · `READ_COUNT` · `READ_BLOCK_MS` | 2000 · 16 · 20 |
 | Model | `MODEL_PATH` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · 960 · FP16 · 0.25 |
 | MinIO | `MINIO_ENDPOINT` · `MINIO_SECURE` · `MINIO_BUCKET` | (qua `.env`) · `images` |

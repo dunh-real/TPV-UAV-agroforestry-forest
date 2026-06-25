@@ -12,9 +12,10 @@ services:
     restart: unless-stopped
     ports:
       - "6380:6379"
-    command: redis-server --maxmemory 8gb --maxmemory-policy noeviction --appendonly no --requirepass admin123456
+    # Password lấy từ .env (REDIS_PASSWORD); default 'changeme' là placeholder, không phải secret.
+    command: redis-server --maxmemory 8gb --maxmemory-policy noeviction --appendonly no --requirepass ${REDIS_PASSWORD:-changeme}
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "admin123456", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -26,9 +27,11 @@ services:
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # console
+    # MinIO local giờ THỪA (app dùng MinIO remote qua .env). Giữ làm dev fallback;
+    # creds từ .env hoặc placeholder (không phải secret).
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: admin123456
+      MINIO_ROOT_USER: ${MINIO_LOCAL_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_LOCAL_PASSWORD:-changeme}
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
