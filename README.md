@@ -23,7 +23,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
 **Lane A (real-time, drone→detect→alert) — tầng transport + AI server: ĐÃ XONG, đo kiểm bằng tải thật.**
 
 - [x] **Kết nối** Redis Streams: consumer group, ack, reclaim worker chết (`XPENDING`+`XCLAIM`, hợp Redis ≥5), tự dựng lại group khi Redis flush.
-- [x] **Chịu tải**: trần ~110 fps / 2 worker (có lưu A/B/C; ~282 fps / 4 worker); mục tiêu ~28 fps (4 drone @ 7fps) dư ~4×; backpressure `MAXLEN`, 0 drop dưới trần.
+- [x] **Chịu tải**: trần ~282 fps / 4 worker mặc định (~110 fps / 2 worker, đều có lưu A/B/C); mục tiêu ~28 fps (4 drone @ 7fps) ⇒ dùng ~10% trần; backpressure `MAXLEN`, 0 drop dưới trần.
 - [x] **Real-time**: g2g 16–18 ms dưới tải (đã phân rã từng chặng).
 - [x] **Lưu trữ 3 tầng** (chống mất bằng chứng do model bỏ sót): A `events/` (sự kiện, dedup best-in-window), B `uncertain/` (frame nghi ngờ dưới ngưỡng — ứng viên false-negative), C `blackbox/` (mọi frame, thumbnail lấy mẫu) — bound RAM, lifecycle TTL theo tầng.
 - [x] **Độ tin cậy**: idempotency (`done:{captureId}`) + dead-letter (`dms:ai:dead-letter`) + reclaim job treo.
@@ -102,8 +102,9 @@ mkdir -p data && cd data && curl -sLO http://images.cocodataset.org/zips/val2017
 ## Chạy
 
 ```bash
-# Production: 2 worker engine, mỗi GPU 1 (khuyến nghị ~4 drone)
+# Production: mặc định 4 worker engine (2 mỗi GPU) — trần ~282fps, dự phòng cao
 scripts/run_workers.sh
+# N=2 scripts/run_workers.sh   # 2 worker cũng đủ ~4 drone (tiết kiệm hơn)
 
 # Demo end-to-end (worker + BE nền, rồi producer giả lập) — 7 ảnh/s/drone = tải thực
 DRONE=drone1 FPS=7 COUNT=100 scripts/run_e2e.sh
@@ -136,8 +137,9 @@ docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS dms:captur
 | **4× engine** | 200 fps | 0% | 199 | **17 / 33 ms** |
 | 4× engine | 350 fps | 19% | 282 | 1439 ms (quá trần → queue nổ) |
 
-**Khuyến nghị ~4 drone (≈28 fps @ 7fps/drone): 2 worker engine, mỗi GPU 1** — đo p50=18ms, 0 drop. Chọn 2 vì
-latency thấp + **dự phòng** (1 chết thì cái kia gánh + reclaim), không vì tốc độ (1 worker đã thừa).
+**Mặc định 4 worker engine (2 mỗi GPU)** — trần ~282fps, dự phòng cao (1-2 worker chết vẫn gánh tốt),
+GPU thừa thãi (mỗi worker ~1.2GB/96GB, util ~10% ở tải thật). Với ~4 drone (≈28fps @ 7fps/drone) chỉ
+dùng ~10% trần. **2 worker cũng đủ** cho ~4 drone (đo p50=18ms, 0 drop) nếu muốn tiết kiệm: `N=2`.
 
 ### Trần 2 worker (engine, có lưu 3 tầng A/B/C) — quét fps thật trên 4 drone COCO
 | fps tổng | fps/drone | g2g p50 | drop | trạng thái |

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Khởi động N worker YOLO26x (TensorRT engine), rải đều 2 GPU. Mặc định N=2 —
-# cấu hình khuyến nghị cho ~4 drone (dự phòng + latency thấp, xem transport/README.md).
+# Khởi động N worker YOLO26x (TensorRT engine), rải đều 2 GPU (mỗi card N/2 worker). Mặc định
+# N=4 — trần ~282fps, dự phòng cao; GPU thừa thãi (mỗi worker ~1.2GB / 96GB). Xem transport/README.md.
 #
-#   scripts/run_workers.sh        # 2 worker, mỗi card 1
-#   N=4 scripts/run_workers.sh    # 4 worker (chỉ khi tải > ~100fps)
+#   scripts/run_workers.sh        # 4 worker (2 mỗi card)
+#   N=2 scripts/run_workers.sh    # 2 worker (đủ cho ~4 drone, tiết kiệm hơn)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
-N="${N:-2}"
+N="${N:-4}"
 MODEL="${MODEL_PATH:-weights/yolo26x.engine}"
 
 $PY -m transport.init_streams
