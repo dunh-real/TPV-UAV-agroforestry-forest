@@ -111,10 +111,24 @@ DRONE=drone1 FPS=7 COUNT=100 scripts/run_e2e.sh
 
 # Load test ảnh thật COCO (đội drone + BE collector)
 .venv/bin/python -m transport.loadtest --src data/val2017 --drones 4 --fps 7 --secs 20
-
-# Giám sát (pass đọc từ .env)
-docker exec rs-redis-test redis-cli -a "$REDIS_PASSWORD" XINFO GROUPS dms:captures:ready
 ```
+
+### Theo dõi (server không cần `redis-cli`/`mc` — script dùng venv + `.env`)
+
+```bash
+# Tiến trình xử lý AI: chạy worker nền rồi tail log (mỗi worker in processed/xlen/pending mỗi 2s)
+nohup scripts/run_workers.sh > ~/workers.log 2>&1 &
+tail -f ~/workers.log | grep --line-buffered processed
+
+# Dashboard Redis + GPU + throughput (refresh 2s): độ dài stream, pending/consumers cg:ai & cg:be,
+# fps 5s gần nhất, GPU util/mem/temp, số worker
+watch -n 2 scripts/monitor.sh
+
+# MinIO 3 tầng (số object + dung lượng events/uncertain/blackbox) — list chậm khi nhiều object
+scripts/mon_minio.sh                 # 1 lần
+watch -n 30 scripts/mon_minio.sh     # chu kỳ dài
+```
+> `consumers` đếm cả consumer Redis cũ chưa dọn → số worker thật xem dòng `workers:` trong `monitor.sh`.
 
 ---
 
@@ -230,7 +244,7 @@ Secrets thật chỉ ở `.env` (gitignored). File tracked dùng placeholder. Re
 ```
 docs/            thiết kế (kiến trúc + transport spec)
 transport/       config, envelope, init_streams, producer, worker, consumer, storage, loadtest
-scripts/         run_workers.sh, run_e2e.sh
+scripts/         run_workers.sh, run_e2e.sh, monitor.sh, mon_minio.sh
 docker-compose.yml   Redis (+ MinIO local dev fallback)
 .env.example     mẫu secrets (copy -> .env)
 weights/ data/ samples/   weights + ảnh test (gitignored)
