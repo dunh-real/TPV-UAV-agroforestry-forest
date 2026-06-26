@@ -4,7 +4,7 @@
 giữ RAM bounded (spec §6). Thay script này bằng drone/gateway thật sau.
 
 Dùng:
-  python -m transport.producer --src samples --drone drone1 --fps 10 --count 200
+  python -m transport.producer --src samples --drone drone1 --fps 7 --count 200
 Không có --src hoặc thư mục rỗng → tự sinh ảnh test tổng hợp.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default="samples", help="thư mục ảnh nguồn")
     ap.add_argument("--drone", default="drone1")
-    ap.add_argument("--fps", type=float, default=10.0)
+    ap.add_argument("--fps", type=float, default=7.0)  # khớp tải thực drone: 7 ảnh/s/drone
     ap.add_argument("--count", type=int, default=200, help="số frame gửi (0 = vô hạn)")
     args = ap.parse_args()
 

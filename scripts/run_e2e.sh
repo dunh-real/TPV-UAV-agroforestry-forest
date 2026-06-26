@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 DRONE="${DRONE:-drone1}"
-FPS="${FPS:-10}"
+FPS="${FPS:-7}"   # tải thực: 7 ảnh/s/drone
 COUNT="${COUNT:-100}"
 
 echo "== init streams =="

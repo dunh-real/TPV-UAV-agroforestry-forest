@@ -75,6 +75,19 @@ def sharpness(img) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+def downscale(img, max_side: int):
+    """Thu nhỏ ảnh để cạnh dài ≤ max_side (giữ tỉ lệ). max_side<=0 hoặc đã nhỏ hơn → giữ nguyên.
+    Dùng cho thumbnail hộp đen (tầng C) để buffer rẻ."""
+    if max_side <= 0:
+        return img
+    h, w = img.shape[:2]
+    m = max(h, w)
+    if m <= max_side:
+        return img
+    s = max_side / m
+    return cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+
+
 # Lua atomic: cập nhật điểm-best của key NẾU điểm mới cao hơn. Trả 1 nếu đây là ảnh nét
 # nhất tới giờ trong cửa sổ → caller upload (ghi đè ảnh cũ). Lần đầu đặt TTL = cửa sổ;
 # các lần sau KEEPTTL (cửa sổ không bị kéo dài). Đa worker an toàn nhờ chạy 1 lượt trên Redis.
@@ -180,19 +193,35 @@ def process_batch(model, r, entries, store) -> int:
             continue
         dets = to_detections(res)
         events = [d for d in dets if is_event(d)]
-        # LƯU ảnh chỉ khi có sự kiện. Dedup theo (drone, lớp chủ đạo, cửa sổ): MỌI frame event
-        # trỏ về cùng evidenceKey ổn định; chỉ ảnh NÉT NHẤT trong cửa sổ được upload/ghi đè vào
-        # đó (architecture §6.5 "frame tốt nhất"). BE gom nhóm + đếm EvidenceCount từ result.
+        # Lưu ảnh PHÂN TẦNG (chống mất bằng chứng do false-negative):
+        #  A events/   : có sự kiện → full-res annotated, dedup best-in-window (evidenceKey cho BE).
+        #  B uncertain/: có detection thô nhưng chưa đạt sự kiện → ứng viên false-negative, lưu để audit.
+        #  C blackbox/ : MỌI frame, thumbnail, lấy mẫu 1/giây/drone → lưới an toàn + corpus retrain.
+        # Chỉ tầng A xuất evidenceKey ra BE; B/C lưu nội bộ để truy vết, BE không cần.
         ta = time.time()
         evidence_key = ""
-        if store is not None and events:
-            top = max(events, key=lambda d: d["conf"])  # lớp conf cao nhất làm đại diện
-            win = int(req["ts"] // config.DEDUP_WINDOW_S)
-            evidence_key = store.window_key(req["drone_id"], top["cls"], win)
-            if is_best_in_window(r, f"best:{req['drone_id']}:{top['cls']}:{win}", sharpness(img)):
-                okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if store is not None:
+            if events:
+                top = max(events, key=lambda d: d["conf"])  # lớp conf cao nhất làm đại diện
+                win = int(req["ts"] // config.DEDUP_WINDOW_S)
+                evidence_key = store.window_key(req["drone_id"], top["cls"], win)
+                if is_best_in_window(r, f"best:{req['drone_id']}:{top['cls']}:{win}", sharpness(img)):
+                    okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    if okimg:
+                        store.put_async(evidence_key, buf.tobytes())
+            elif config.SAVE_UNCERTAIN and dets:
+                # Tầng B: box dưới ngưỡng vẫn vẽ (res.plot ở conf=CONF) để xem model "suýt" thấy gì.
+                okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, config.UNCERTAIN_JPEG_Q])
                 if okimg:
-                    store.put_async(evidence_key, buf.tobytes())
+                    store.put_async(store.uncertain_key(req["drone_id"], req["frame_id"]), buf.tobytes())
+            # Tầng C độc lập tầng A/B: SET NX chốt 1 slot/giây/drone (đa worker an toàn).
+            if config.SAVE_BLACKBOX:
+                slot = int(req["ts"] // config.BLACKBOX_SAMPLE_S)
+                if r.set(f"bb:{req['drone_id']}:{slot}", b"1", nx=True, ex=config.BLACKBOX_SAMPLE_S + 2):
+                    okimg, buf = cv2.imencode(".jpg", downscale(img, config.BLACKBOX_IMGSZ),
+                                              [cv2.IMWRITE_JPEG_QUALITY, config.BLACKBOX_JPEG_Q])
+                    if okimg:
+                        store.put_async(store.blackbox_key(req["drone_id"], slot), buf.tobytes())
         ann_ms = (time.time() - ta) * 1000.0
         # Output theo BE: hasDetection + detections[{type,confidence,bbox}] + model/version.
         # `ts`/`timing` giữ cho đo latency/observability (BE bỏ qua field thừa).

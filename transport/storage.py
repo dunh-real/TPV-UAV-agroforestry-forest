@@ -39,16 +39,27 @@ class ImageStore:
             self.client.make_bucket(self.bucket)
 
     def ensure_lifecycle(self) -> None:
-        """Đặt TTL: tự xóa object `annotated/` cũ hơn MINIO_TTL_DAYS ngày (chống đầy đĩa)."""
-        if config.MINIO_TTL_DAYS <= 0:
+        """Đặt TTL theo TỪNG tầng (chống đầy đĩa): A=events/ lâu, B=uncertain/ trung, C=blackbox/
+        ngắn. MinIO lifecycle chỉ theo NGÀY. Trước đây rule đặt nhầm prefix `annotated/` (không
+        khớp `events/`) nên ảnh sự kiện không bao giờ tự xóa — nay sửa đúng.
+        """
+        rules = []
+        if config.MINIO_TTL_DAYS > 0:
+            rules.append(Rule(ENABLED, rule_id="expire-events",
+                              rule_filter=Filter(prefix="events/"),
+                              expiration=Expiration(days=config.MINIO_TTL_DAYS)))
+        if config.UNCERTAIN_TTL_DAYS > 0:
+            rules.append(Rule(ENABLED, rule_id="expire-uncertain",
+                              rule_filter=Filter(prefix="uncertain/"),
+                              expiration=Expiration(days=config.UNCERTAIN_TTL_DAYS)))
+        if config.BLACKBOX_TTL_DAYS > 0:
+            rules.append(Rule(ENABLED, rule_id="expire-blackbox",
+                              rule_filter=Filter(prefix="blackbox/"),
+                              expiration=Expiration(days=config.BLACKBOX_TTL_DAYS)))
+        if not rules:
             return
         try:
-            cfg = LifecycleConfig([
-                Rule(ENABLED, rule_id="expire-annotated",
-                     rule_filter=Filter(prefix="annotated/"),
-                     expiration=Expiration(days=config.MINIO_TTL_DAYS))
-            ])
-            self.client.set_bucket_lifecycle(self.bucket, cfg)
+            self.client.set_bucket_lifecycle(self.bucket, LifecycleConfig(rules))
         except Exception as e:  # noqa: BLE001
             print(f"[minio] set lifecycle failed: {e}")
 
@@ -65,6 +76,18 @@ class ImageStore:
         """
         day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return f"events/{day}/{drone_id}/{cls}/{window_id}.jpg"
+
+    @staticmethod
+    def uncertain_key(drone_id: str, frame_id: str) -> str:
+        """Tầng B — vùng nghi ngờ: 1 key/frame (lưu mọi frame nghi ngờ để audit/retrain)."""
+        day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
+        return f"uncertain/{day}/{drone_id}/{frame_id}.jpg"
+
+    @staticmethod
+    def blackbox_key(drone_id: str, slot: int) -> str:
+        """Tầng C — hộp đen: 1 key/slot-thời-gian (lấy mẫu) → timeline liên tục, nhẹ."""
+        day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
+        return f"blackbox/{day}/{drone_id}/{slot}.jpg"
 
     def put_async(self, key: str, jpeg: bytes) -> bool:
         """Đẩy upload vào pool, trả ngay. Quá trần pending → BỎ (giữ RAM bounded), trả False.

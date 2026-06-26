@@ -77,7 +77,7 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "changeme")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "images")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "0") == "1"  # UseSSL
-# Lifecycle: tự xóa ảnh annotated cũ hơn N ngày (chống đầy đĩa). 0 = không đặt TTL.
+# Lifecycle TẦNG A (events/): tự xóa ảnh sự kiện cũ hơn N ngày. 0 = không đặt TTL.
 MINIO_TTL_DAYS = _int("MINIO_TTL_DAYS", 7)
 # Trần số ảnh đang chờ upload giữ trong RAM (mỗi worker). MinIO chậm/sập → quá trần thì
 # BỎ ảnh đó (log) thay vì phình RAM. 4096 × ~150KB ≈ 600MB/worker — server 251GB dư thừa,
@@ -95,6 +95,27 @@ ANNOTATE = os.getenv("ANNOTATE", "1") == "1"
 EVENT_CLASSES = set(filter(None, (c.strip() for c in os.getenv("EVENT_CLASSES", "").split(","))))
 EVENT_CONF = float(os.getenv("EVENT_CONF", "0.5"))
 DEDUP_WINDOW_S = _int("DEDUP_WINDOW_S", 5)
+
+# --- Lưu ảnh phân tầng A/B/C (chống mất bằng chứng do false-negative) --------
+# Input thực tế ~7 ảnh/s/drone × ~4 drone = ~28 fps. Lưu full mọi frame quá đắt (~hàng trăm
+# GB/ngày) nên phân tầng theo GIÁ TRỊ: A đầy đủ/lâu, B vùng nghi ngờ, C hộp đen rẻ.
+#
+#   Tầng A (events/)    : frame CÓ sự kiện (đạt EVENT_CONF). Full-res annotated, dedup
+#                         best-in-window, TTL MINIO_TTL_DAYS. (đã có sẵn)
+#   Tầng B (uncertain/) : frame CÓ detection thô (≥CONF) nhưng KHÔNG đạt sự kiện — ứng viên
+#                         false-negative cao nhất (model "suýt" thấy). Annotated chất lượng vừa.
+#   Tầng C (blackbox/)  : MỌI frame kể cả 0-detection. Thumbnail, lấy mẫu thời gian → lưới an
+#                         toàn khi model miss hẳn + corpus để chạy lại model mới sau này.
+SAVE_UNCERTAIN = os.getenv("SAVE_UNCERTAIN", "1") == "1"
+UNCERTAIN_JPEG_Q = _int("UNCERTAIN_JPEG_Q", 70)
+UNCERTAIN_TTL_DAYS = _int("UNCERTAIN_TTL_DAYS", 2)
+
+SAVE_BLACKBOX = os.getenv("SAVE_BLACKBOX", "1") == "1"
+# Lấy mẫu: giữ tối đa 1 thumbnail / N giây / drone (đa worker an toàn qua SET NX). 1 = 1fps/drone.
+BLACKBOX_SAMPLE_S = _int("BLACKBOX_SAMPLE_S", 1)
+BLACKBOX_IMGSZ = _int("BLACKBOX_IMGSZ", 640)   # cạnh dài thumbnail (0 = giữ nguyên)
+BLACKBOX_JPEG_Q = _int("BLACKBOX_JPEG_Q", 60)
+BLACKBOX_TTL_DAYS = _int("BLACKBOX_TTL_DAYS", 1)
 
 # --- Model -----------------------------------------------------------------
 MODEL_PATH = os.getenv("MODEL_PATH", "weights/yolo26x.pt")
