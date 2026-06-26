@@ -168,6 +168,14 @@ trên hot-path); cảnh viễn thám thật phần lớn trống → ít detecti
 Phần xử lý ~**hằng số 13ms** ở mọi tải; vượt trần thì latency nổ do **queue wait** + `MAXLEN`
 drop frame cũ (đúng thiết kế realtime). *(Chưa gồm mạng drone→server thực địa 5–30ms.)*
 
+> **Đo g2g & clock skew.** `result.ts` = mốc BE gắn lúc bắt frame; **BE nên đo g2g bằng đồng hồ
+> CỦA CHÍNH BE** (`BE_now − ts`) → dùng 1 đồng hồ duy nhất, **không có sai số đồng bộ giờ**. Trường
+> `timing.wait` do AI tính (`t_recv_AI − ts_BE`) trộn 2 máy nên lệch đúng bằng clock skew (đo được
+> server AI lệch ~11–20ms so với BE; cả hai sync `systemd-timesyncd`/SNTP ~chục ms) — chỉ dùng làm
+> số quan sát tương đối, các mốc `dec/inf/ann` (delta trên 1 đồng hồ AI) mới chính xác tuyệt đối.
+> Cần đo cross-machine sub-ms thì cài **chrony** trên cả AI lẫn BE, cùng nguồn NTP nội bộ. Clock
+> skew **không ảnh hưởng xử lý** — chỉ là vấn đề đo đạc, không phải lỗi code AI/BE.
+
 ---
 
 ## Lưu trữ & độ tin cậy
