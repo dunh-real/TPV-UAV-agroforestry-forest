@@ -160,10 +160,10 @@ trên hot-path); cảnh viễn thám thật phần lớn trống → ít detecti
 | XADD req → worker pickup | ~1 | transport Redis |
 | decode JPEG | 2 | CPU |
 | **infer YOLO26x** | 7–9 | ~50% |
-| dedup + vẽ box + encode | 2 | |
+| dedup (sharpness ds320) + vẽ box `res.plot()` | 2–4 | |
 | XADD res → BE pickup | ~1.5 | |
 | **= G2G hot-path** | **~16** | cái BE thấy |
-| upload MinIO (remote) | ~85 | **ASYNC, off hot-path** |
+| JPEG encode + upload MinIO (remote) | ~85 | **ASYNC, off hot-path** |
 
 Phần xử lý ~**hằng số 13ms** ở mọi tải; vượt trần thì latency nổ do **queue wait** + `MAXLEN`
 drop frame cũ (đúng thiết kế realtime). *(Chưa gồm mạng drone→server thực địa 5–30ms.)*
