@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import BytesIO
 
+import cv2
 from minio import Minio
 from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 from minio.commonconfig import ENABLED, Filter
@@ -89,10 +90,8 @@ class ImageStore:
         day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return f"blackbox/{day}/{drone_id}/{slot}.jpg"
 
-    def put_async(self, key: str, jpeg: bytes) -> bool:
-        """Đẩy upload vào pool, trả ngay. Quá trần pending → BỎ (giữ RAM bounded), trả False.
-        Lỗi upload chỉ log, không làm hỏng vòng infer.
-        """
+    def _reserve(self) -> bool:
+        """Chiếm 1 slot trong hàng đợi upload. False = quá trần → caller BỎ ảnh (giữ RAM bounded)."""
         with self._plock:
             if self._pending >= config.MINIO_MAX_PENDING:
                 self.dropped_uploads += 1
@@ -101,6 +100,16 @@ class ImageStore:
                           f"(tổng bỏ={self.dropped_uploads}) — MinIO chậm?")
                 return False
             self._pending += 1
+        return True
+
+    def _release(self) -> None:
+        with self._plock:
+            self._pending -= 1
+
+    def put_async(self, key: str, jpeg: bytes) -> bool:
+        """Đẩy upload bytes đã encode vào pool, trả ngay. Lỗi upload chỉ log, không hỏng vòng infer."""
+        if not self._reserve():
+            return False
         data = bytes(jpeg)
 
         def _do():
@@ -111,8 +120,41 @@ class ImageStore:
             except Exception as e:  # noqa: BLE001
                 print(f"[minio] upload {key} failed: {e}")
             finally:
-                with self._plock:
-                    self._pending -= 1
+                self._release()
+
+        self._pool.submit(_do)
+        return True
+
+    def put_image_async(self, key: str, bgr, quality: int, max_side: int = 0) -> bool:
+        """Như put_async nhưng JPEG-encode (và downscale nếu max_side>0) NGAY TRONG thread upload.
+        Mục đích: lấy `cv2.imencode` (CPU nặng ~vài ms/frame) RA KHỎI vòng infer → nâng trần
+        throughput. Hot-path chỉ còn `res.plot()` (cần Result/GPU nên giữ lại). `bgr` là numpy
+        ảnh BGR; caller KHÔNG được sửa in-place sau khi gọi (thread đọc bất đồng bộ).
+        """
+        if not self._reserve():
+            return False
+        img = bgr
+
+        def _do():
+            try:
+                im = img
+                if max_side > 0:
+                    h, w = im.shape[:2]
+                    m = max(h, w)
+                    if m > max_side:
+                        s = max_side / m
+                        im = cv2.resize(im, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+                ok, buf = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                if not ok:
+                    return
+                data = buf.tobytes()
+                self.client.put_object(
+                    self.bucket, key, BytesIO(data), length=len(data), content_type="image/jpeg"
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"[minio] put_image {key} failed: {e}")
+            finally:
+                self._release()
 
         self._pool.submit(_do)
         return True

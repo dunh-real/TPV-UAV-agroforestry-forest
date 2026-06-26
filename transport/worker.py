@@ -70,22 +70,18 @@ def is_event(d) -> bool:
 
 def sharpness(img) -> float:
     """Độ nét = variance of Laplacian (cao = nét hơn). Dùng chọn ảnh TỐT NHẤT trong cửa sổ
-    thay vì giữ ảnh đầu tiên (architecture §6.5 "frame tốt nhất")."""
+    thay vì giữ ảnh đầu tiên (architecture §6.5 "frame tốt nhất").
+
+    Tính trên ảnh thu nhỏ (cạnh dài ~320) vì hàm này chạy cho MỌI frame có event (hot-path):
+    full-res ~7.6ms vs ds320 ~1.8ms. Chỉ cần THỨ HẠNG tương đối trong cùng (drone,cửa sổ) — các
+    frame cùng drone cùng độ phân giải nên ranking giữ nguyên sau khi downscale.
+    """
+    h, w = img.shape[:2]
+    if max(h, w) > 320:
+        s = 320.0 / max(h, w)
+        img = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-
-def downscale(img, max_side: int):
-    """Thu nhỏ ảnh để cạnh dài ≤ max_side (giữ tỉ lệ). max_side<=0 hoặc đã nhỏ hơn → giữ nguyên.
-    Dùng cho thumbnail hộp đen (tầng C) để buffer rẻ."""
-    if max_side <= 0:
-        return img
-    h, w = img.shape[:2]
-    m = max(h, w)
-    if m <= max_side:
-        return img
-    s = max_side / m
-    return cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
 
 
 # Lua atomic: cập nhật điểm-best của key NẾU điểm mới cao hơn. Trả 1 nếu đây là ảnh nét
@@ -206,22 +202,20 @@ def process_batch(model, r, entries, store) -> int:
                 win = int(req["ts"] // config.DEDUP_WINDOW_S)
                 evidence_key = store.window_key(req["drone_id"], top["cls"], win)
                 if is_best_in_window(r, f"best:{req['drone_id']}:{top['cls']}:{win}", sharpness(img)):
-                    okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    if okimg:
-                        store.put_async(evidence_key, buf.tobytes())
+                    # JPEG encode chạy trong thread upload (off hot-path); chỉ res.plot() ở đây.
+                    store.put_image_async(evidence_key, res.plot(), 85)
             elif config.SAVE_UNCERTAIN and dets:
                 # Tầng B: box dưới ngưỡng vẫn vẽ (res.plot ở conf=CONF) để xem model "suýt" thấy gì.
-                okimg, buf = cv2.imencode(".jpg", res.plot(), [cv2.IMWRITE_JPEG_QUALITY, config.UNCERTAIN_JPEG_Q])
-                if okimg:
-                    store.put_async(store.uncertain_key(req["drone_id"], req["frame_id"]), buf.tobytes())
+                store.put_image_async(
+                    store.uncertain_key(req["drone_id"], req["frame_id"]), res.plot(),
+                    config.UNCERTAIN_JPEG_Q)
             # Tầng C độc lập tầng A/B: SET NX chốt 1 slot/giây/drone (đa worker an toàn).
+            # downscale + encode đều trong thread upload (truyền ảnh gốc + max_side).
             if config.SAVE_BLACKBOX:
                 slot = int(req["ts"] // config.BLACKBOX_SAMPLE_S)
                 if r.set(f"bb:{req['drone_id']}:{slot}", b"1", nx=True, ex=config.BLACKBOX_SAMPLE_S + 2):
-                    okimg, buf = cv2.imencode(".jpg", downscale(img, config.BLACKBOX_IMGSZ),
-                                              [cv2.IMWRITE_JPEG_QUALITY, config.BLACKBOX_JPEG_Q])
-                    if okimg:
-                        store.put_async(store.blackbox_key(req["drone_id"], slot), buf.tobytes())
+                    store.put_image_async(store.blackbox_key(req["drone_id"], slot), img,
+                                          config.BLACKBOX_JPEG_Q, max_side=config.BLACKBOX_IMGSZ)
         ann_ms = (time.time() - ta) * 1000.0
         # Output theo BE: hasDetection + detections[{type,confidence,bbox}] + model/version.
         # `ts`/`timing` giữ cho đo latency/observability (BE bỏ qua field thừa).
