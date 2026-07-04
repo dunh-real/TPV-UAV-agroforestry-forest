@@ -29,9 +29,28 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
 - [x] **Độ tin cậy**: idempotency (`done:{captureId}`) + dead-letter (`dms:ai:dead-letter`) + reclaim job treo.
 - [x] **Output theo BE**: `captureId, hasDetection, detections[{type,confidence,bbox}], model/version, evidenceKey`.
 - [x] **AI**: YOLO26x thật (TensorRT FP16 engine). 80 lớp COCO để test tốc độ/kết nối.
+- [x] **Domain cháy rừng — model v1 (2026-07-04)**: fine-tune YOLO26x trên dataset hợp nhất
+  D-Fire + WSDY/HPWREN (dedup pHash chống leakage; train 9.027 — 38% ảnh âm tính / val 2.675
+  / test 3.058; chi tiết + cách tái tạo: [docs/wildfire-dataset.md](docs/wildfire-dataset.md)).
+  60 epochs @960, 2 GPU DDP, ~2h.
+
+  | Test set (3.058 ảnh) | P | R | mAP50 | mAP50-95 |
+  |---|---|---|---|---|
+  | all | 0.753 | 0.691 | **0.752** | 0.429 |
+  | smoke (lớp cảnh báo sớm) | 0.821 | 0.755 | **0.819** | 0.510 |
+  | fire | 0.684 | 0.628 | 0.685 | 0.348 |
+
+  Test ≈ val (0.752/0.756) ⇒ không leakage, số tin được. Engine TensorRT FP16 verify khớp
+  best.pt. Sanity-check 7 ảnh cháy rừng VN từ báo: 5/5 ảnh cháy detect đúng (kể cả ban đêm),
+  2/2 ảnh không cháy im lặng đúng ([samples/vn_fire_test/](samples/vn_fire_test/)).
+  Serve: `MODEL_PATH=weights/wildfire_y26x.engine EVENT_CLASSES=smoke,fire
+  EVENT_CONF_CLS="smoke:0.3,fire:0.5" CONF=0.15` (CONF thấp để tầng B gom ứng viên
+  false-negative làm data fine-tune vòng sau). `MODEL_VERSION=wildfire-v1`.
 
 **Chưa làm** (cần data + domain, hoặc ngoài đường nóng Lane A):
-- [ ] Dữ liệu + nhãn viễn thám thật → fine-tune (thay 80 lớp COCO) + định nghĩa event/ngưỡng cụ thể.
+- [ ] Data v2: DFS (lớp `other` chống nhầm nắng/đèn — tải tay), Boreal Forest Fire (UAV),
+  hard-negative VN (mây/sương/khói đốt đồng) + data thật từ tầng B `uncertain/`.
+- [ ] Đo **false-alarm rate/giờ** trên video dài không cháy — metric chấp nhận của hệ cảnh báo.
 - [ ] **Georef** pixel→lat/lon (cần camera intrinsics + attitude).
 - [ ] **Tracking** (`track_id`) → dedup theo vật thể thay vì cửa sổ thời gian.
 - [ ] Ingestion thật (drone/RTSP) thay producer giả lập.
@@ -55,14 +74,16 @@ nên GET-per-frame quá đắt (đo được **66 ms**). AI upload ảnh lên Mi
 // TRẢ  dms:ai:results  (schema theo BE)
 { "captureId": "drone1-000123", "droneId": "drone1", "status": "ok",
   "result": { "hasDetection": true,
-              "detections": [ { "type": "blast", "confidence": 0.91, "bbox": [x,y,w,h] } ],
-              "model": "yolo26x", "modelVersion": "coco-pretrained" },
-  "evidenceKey": "events/2026/06/25/drone1/blast/356475310.jpg",  // ảnh nét nhất cửa sổ (rỗng nếu không lưu)
+              "detections": [ { "type": "smoke", "confidence": 0.91, "bbox": [x,y,w,h] } ],
+              "model": "yolo26x", "modelVersion": "wildfire-v1" },
+  "evidenceKey": "events/2026/07/04/drone1/smoke/356475310.jpg",  // ảnh nét nhất cửa sổ (rỗng nếu không lưu)
   "err": "" }
 
 // dms:ai:dead-letter : job giao > MAX_DELIVERIES lần (độc/treo) → đẩy vào đây + ack, thôi retry.
 ```
-`type` = nhãn model (sau fine-tune = mã sâu/bệnh). Idempotency: `done:{captureId}` chặn emit trùng.
+`type` = nhãn model — hiện `smoke` | `fire` (wildfire-v1); domain khác sau này thêm lớp tương ứng.
+Bbox là pixel trên ảnh gốc — **BE tự vẽ overlay khi hiển thị** (cảnh báo/gom nhóm cũng là việc BE).
+Idempotency: `done:{captureId}` chặn emit trùng.
 
 ---
 
@@ -74,7 +95,7 @@ nên GET-per-frame quá đắt (đo được **66 ms**). AI upload ảnh lên Mi
 | CPU / RAM | 16 core / 251GB |
 | Python | **3.12.10** qua `uv`, venv `.venv/` |
 | Stack | torch 2.12.1+cu130, ultralytics 8.4.75, TensorRT 11.1, redis-py, msgpack, minio |
-| Hạ tầng | Redis + MinIO **remote** qua `.env` (Tailscale `100.x` / `s3.blogscloud.click`); compose local là dev fallback |
+| Hạ tầng | Redis + MinIO **remote** qua `.env` (Tailscale `100.x` / `s3.lamhai.net` — thay `blogscloud.click` chết tunnel 2026-07-04); compose local là dev fallback |
 
 ### Cài đặt
 ```bash
@@ -228,8 +249,8 @@ upload queue bound `MINIO_MAX_PENDING` (bỏ + log khi MinIO chậm, không phì
 | Redis | `REDIS_URL` · `REDIS_PASSWORD` | (qua `.env`) |
 | Stream | `REQ_STREAM` · `RES_STREAM` · `DLQ_STREAM` | `dms:captures:ready` · `dms:ai:results` · `dms:ai:dead-letter` |
 | Backpressure | `REQ_MAXLEN` · `READ_COUNT` · `READ_BLOCK_MS` | 2000 · 16 · 20 |
-| Model | `MODEL_PATH` · `MODEL_VERSION` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · `coco-pretrained` · 960 · FP16 · 0.25 |
-| Event/dedup | `EVENT_CLASSES` · `EVENT_CONF` · `DEDUP_WINDOW_S` | (mọi lớp) · 0.5 · 5 |
+| Model | `MODEL_PATH` · `MODEL_VERSION` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · `coco-pretrained` · 960 · FP16 · 0.25 — **prod hiện tại**: `wildfire_y26x.engine` · `wildfire-v1` · CONF 0.15 |
+| Event/dedup | `EVENT_CLASSES` · `EVENT_CONF` · `EVENT_CONF_CLS` · `DEDUP_WINDOW_S` | (mọi lớp) · 0.5 · rỗng · 5 — **prod**: `smoke,fire` · `EVENT_CONF_CLS="smoke:0.3,fire:0.5"` (ngưỡng riêng từng lớp, override `EVENT_CONF`) |
 | Lưu tầng B | `SAVE_UNCERTAIN` · `UNCERTAIN_JPEG_Q` · `UNCERTAIN_TTL_DAYS` | 1 · 70 · 2 |
 | Lưu tầng C | `SAVE_BLACKBOX` · `BLACKBOX_SAMPLE_S` · `BLACKBOX_IMGSZ` · `BLACKBOX_JPEG_Q` · `BLACKBOX_TTL_DAYS` | 1 · 1 · 640 · 60 · 1 |
 | Độ tin cậy | `DONE_TTL_S` · `MAX_DELIVERIES` · `CLAIM_MIN_IDLE_MS` | 120 · 5 · 30000 |
