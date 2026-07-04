@@ -94,6 +94,12 @@ ANNOTATE = os.getenv("ANNOTATE", "1") == "1"
 # vd "fire,smoke" cho viễn thám).
 EVENT_CLASSES = set(filter(None, (c.strip() for c in os.getenv("EVENT_CLASSES", "").split(","))))
 EVENT_CONF = float(os.getenv("EVENT_CONF", "0.5"))
+# Ngưỡng riêng từng lớp, override EVENT_CONF — vd "smoke:0.3,fire:0.5": khói sớm mờ/nhỏ
+# cần ngưỡng thấp (ưu tiên recall, BE đã có luật gom N-frame lọc nhiễu), lửa để cao.
+EVENT_CONF_CLS = {
+    k.strip(): float(v)
+    for k, _, v in (s.partition(":") for s in os.getenv("EVENT_CONF_CLS", "").split(",") if ":" in s)
+}
 DEDUP_WINDOW_S = _int("DEDUP_WINDOW_S", 5)
 
 # --- Lưu ảnh phân tầng A/B/C (chống mất bằng chứng do false-negative) --------

@@ -64,8 +64,10 @@ def to_detections(result) -> list[dict]:
 
 
 def is_event(d) -> bool:
-    """Detection có tính là sự kiện không (lớp + ngưỡng conf). Lớp rỗng = mọi lớp."""
-    return (not config.EVENT_CLASSES or d["cls"] in config.EVENT_CLASSES) and d["conf"] >= config.EVENT_CONF
+    """Detection có tính là sự kiện không (lớp + ngưỡng conf). Lớp rỗng = mọi lớp.
+    Ngưỡng lấy theo lớp (EVENT_CONF_CLS) nếu có, không thì EVENT_CONF chung."""
+    thr = config.EVENT_CONF_CLS.get(d["cls"], config.EVENT_CONF)
+    return (not config.EVENT_CLASSES or d["cls"] in config.EVENT_CLASSES) and d["conf"] >= thr
 
 
 def sharpness(img) -> float:
