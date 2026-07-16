@@ -1,6 +1,6 @@
 """Cấu hình tầng transport — đọc từ env, có default chạy được ngay trên server test.
 
-Tham chiếu: communication-transport-spec.md §2 (key/stream), §9 (bảng tham số).
+Tham chiếu: docs/ai-pipeline.md §2 (key/stream), §4.2 (bảng tham số).
 """
 from __future__ import annotations
 

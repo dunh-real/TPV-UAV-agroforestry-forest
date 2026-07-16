@@ -13,7 +13,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
                           job lỗi quá N lần ──> [Redis: dms:ai:dead-letter]
 ```
 
-> Thiết kế: [kiến trúc tổng](docs/drone-yolo-pipeline-architecture.md) · [đặc tả transport](docs/communication-transport-spec.md).
+> Thiết kế + transport + tích hợp BE: [docs/ai-pipeline.md](docs/ai-pipeline.md).
 > Chi tiết kỹ thuật tầng transport: [transport/README.md](transport/README.md).
 
 ---
@@ -283,7 +283,7 @@ Secrets thật chỉ ở `.env` (gitignored). File tracked dùng placeholder. Re
 ## Cấu trúc
 
 ```
-docs/            thiết kế (kiến trúc + transport spec)
+docs/            ai-pipeline.md (kiến trúc + transport + tích hợp BE) · wildfire-dataset.md (data + train)
 transport/       config, envelope, init_streams, producer, worker, consumer, storage, loadtest
 scripts/         run_workers.sh, run_e2e.sh, monitor.sh, mon_minio.sh,
                  prepare_wildfire_data.py, download_pyro_sdis.py, verify_vn.py

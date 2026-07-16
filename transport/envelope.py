@@ -2,7 +2,7 @@
 
 Redis stream entry là field–value, value binary-safe ⇒ nhét thẳng bytes ảnh,
 KHÔNG base64. `meta`/`result` gói msgpack (gọn hơn JSON ~20-30%, giữ kiểu số).
-Tham chiếu: communication-transport-spec.md §3; architecture §8 (contract).
+Tham chiếu: docs/ai-pipeline.md §3 (contract).
 """
 from __future__ import annotations
 

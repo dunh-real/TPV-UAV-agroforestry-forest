@@ -1,7 +1,7 @@
 # Transport harness (test trên server)
 
-Hiện thực tầng transport theo `docs/communication-transport-spec.md`, **AI worker dùng
-model thật YOLO26x** (không phải echo §11). Chạy được end-to-end ngay trên server này.
+Hiện thực tầng transport theo `docs/ai-pipeline.md`, **AI worker dùng
+model thật YOLO26x** (không phải echo). Chạy được end-to-end ngay trên server này.
 
 ## Môi trường (đã dựng sẵn)
 
