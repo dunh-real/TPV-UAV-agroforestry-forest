@@ -23,7 +23,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
   MinIO chỉ giữ bản durable/annotated, không nằm trên hot-path (GET-per-frame remote đo được ~66ms).
 - **Metadata trả MỌI frame**; ảnh annotated chỉ tạo khi có detection, upload **async** off hot-path.
 - `frame_id`/`captureId` = khóa khớp request–response + idempotency. Worker **stateless** →
-  scale ngang bằng consumer group, sau này bê lên edge (Jetson) không đổi contract.
+  scale ngang bằng consumer group. Toàn bộ inference chạy trên server (2 GPU).
 - GPU dư khủng (2× RTX PRO 6000 Blackwell 96GB) ⇒ tối ưu nhắm **latency + IO**, không phải
   throughput inference. Nút thắt thật = decode/encode JPEG + mạng.
 - Mọi bên là tiến trình độc lập nối TCP qua Redis ("dùng chung Redis" = cùng trỏ một endpoint,
@@ -207,8 +207,6 @@ chỉ ảnh **nét nhất** (variance of Laplacian, so điểm Lua atomic) đư�
 - **Sensor-agnostic**: field `bands` trong meta (RGB / NIR/RedEdge / thermal) → stage tiền xử lý
   tính index theo band có sẵn; không NIR thì fallback VARI/ExG. Ag mà chỉ RGB thì model đuối —
   giá trị nằm ở cảm biến phổ.
-- **Edge (Jetson)**: worker stateless + contract cố định → bê nguyên lên drone, server thành
-  "lò luyện" (fine-tune → quantize bản nhẹ).
 - Còn nợ: luật alert N-frame/T-giây (BE), đo false-alarm rate/giờ, radiometric calibration,
   ground-truth sâu bệnh, observability lane B.
 
