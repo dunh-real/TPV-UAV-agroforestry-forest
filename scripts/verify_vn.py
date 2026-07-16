@@ -24,7 +24,7 @@ TAG = sys.argv[2] if len(sys.argv) > 2 else "v1"
 ALERT = {"smoke": 0.3, "fire": 0.5}  # khớp EVENT_CONF_CLS prod
 EXPECT_ALERT = {"fire_smoke": True, "burn_field": True, "fog": False, "sunset": False}
 
-m = YOLO(MODEL)
+m = YOLO(MODEL, task="detect")
 summary = []
 for cat, want in EXPECT_ALERT.items():
     d = ROOT / "data" / "vn_verify" / cat

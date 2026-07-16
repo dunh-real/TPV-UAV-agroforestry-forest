@@ -254,7 +254,9 @@ def main() -> None:
     name = consumer_name()
     print(f"[worker {name}] loading {config.MODEL_PATH} on device={config.DEVICE} "
           f"imgsz={config.IMGSZ} half={config.HALF}")
-    model = YOLO(config.MODEL_PATH)
+    # task tường minh: file .engine không mang metadata task → để ultralytics đoán sẽ
+    # in WARNING mỗi lần load.
+    model = YOLO(config.MODEL_PATH, task="detect")
     # Warmup để build kernel trước khi vào vòng nóng.
     model.predict(np.zeros((config.IMGSZ, config.IMGSZ, 3), np.uint8),
                   device=config.DEVICE, half=config.HALF, verbose=False)
