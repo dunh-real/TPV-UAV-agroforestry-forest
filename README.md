@@ -31,7 +31,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
 - [x] **AI**: YOLO26x thật (TensorRT FP16 engine). 80 lớp COCO để test tốc độ/kết nối.
 - [x] **Domain cháy rừng — model v1 (2026-07-04)**: fine-tune YOLO26x trên dataset hợp nhất
   D-Fire + WSDY/HPWREN (dedup pHash chống leakage; train 9.027 — 38% ảnh âm tính / val 2.675
-  / test 3.058; chi tiết + cách tái tạo: [docs/wildfire-dataset.md](docs/wildfire-dataset.md)).
+  / test 3.058; chi tiết + cách tái tạo: [docs/wildfire.md](docs/wildfire.md)).
   60 epochs @960, 2 GPU DDP, ~2h.
 
   | Test set (3.058 ảnh) | P | R | mAP50 | mAP50-95 |
@@ -64,7 +64,7 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
   Export TensorRT FP16: `weights/wildfire_v2_y26x.engine` (+ `.pt` cùng tên; smoke-test engine
   trên `samples/vn_fire_test/` OK). **Serve qua `.env` (đã set)**: `MODEL_PATH=weights/wildfire_v2_y26x.engine
   MODEL_VERSION=wildfire-v2 CONF=0.2 EVENT_CLASSES=smoke,fire EVENT_CONF_CLS="smoke:0.3,fire:0.5"`.
-  Chi tiết dataset + lệnh train/tái tạo: [docs/wildfire-dataset.md](docs/wildfire-dataset.md).
+  Chi tiết dataset + phương pháp train/tái tạo: [docs/wildfire.md](docs/wildfire.md).
   Verify ảnh thật: `scripts/verify_vn.py` (ảnh BE gửi vào `data/vn_verify/<nhóm>/`, so v1/v2 cùng bộ).
 
 **Chưa làm** (cần data + domain, hoặc ngoài đường nóng Lane A):
@@ -249,7 +249,7 @@ Secrets thật chỉ ở `.env` (gitignored). File tracked dùng placeholder. Re
 ## Cấu trúc
 
 ```
-docs/            ai-pipeline.md (kiến trúc + transport + tích hợp BE) · wildfire-dataset.md (data + train)
+docs/            ai-pipeline.md (kiến trúc + transport + tích hợp BE) · wildfire.md (data + phương pháp train)
 transport/       config, envelope, init_streams, producer, worker, consumer, storage, loadtest
 scripts/         run_workers.sh, run_e2e.sh, monitor.sh, mon_minio.sh,
                  prepare_wildfire_data.py, download_pyro_sdis.py, verify_vn.py

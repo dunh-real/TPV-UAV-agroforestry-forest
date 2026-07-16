@@ -2,7 +2,7 @@
 
 > Gộp từ 3 doc cũ (`drone-yolo-pipeline-architecture.md`, `communication-transport-spec.md`,
 > `be-integration.md`) và cập nhật theo hiện trạng production. Dataset/train model: xem
-> [wildfire-dataset.md](wildfire-dataset.md). Kết quả đo + vận hành: xem [README](../README.md).
+> [wildfire.md](wildfire.md). Kết quả đo + vận hành: xem [README](../README.md).
 >
 > Cập nhật: 2026-07-16 — model **wildfire-v2**, stream `dms:*`, MinIO `s3.lamhai.net`, lưu 3 tầng.
 
