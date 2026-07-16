@@ -8,7 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 N="${N:-4}"
-MODEL="${MODEL_PATH:-weights/yolo26x.engine}"
+# Model: nguồn sự thật là .env (config.py tự nạp). Chỉ override khi caller set MODEL_PATH
+# tường minh — KHÔNG fallback cứng ở đây (từng gây chạy nhầm COCO trong khi .env đã trỏ
+# wildfire-v2; MODEL_VERSION vẫn ăn .env → kết quả gắn version sai model).
+MODEL="${MODEL_PATH:-$($PY -c 'from transport import config; print(config.MODEL_PATH)')}"
 
 $PY -m transport.init_streams
 echo "khởi động $N worker (model=$MODEL) ..."
