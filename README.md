@@ -43,12 +43,32 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
   Test ≈ val (0.752/0.756) ⇒ không leakage, số tin được. Engine TensorRT FP16 verify khớp
   best.pt. Sanity-check 7 ảnh cháy rừng VN từ báo: 5/5 ảnh cháy detect đúng (kể cả ban đêm),
   2/2 ảnh không cháy im lặng đúng ([samples/vn_fire_test/](samples/vn_fire_test/)).
-  Serve: `MODEL_PATH=weights/wildfire_y26x.engine EVENT_CLASSES=smoke,fire
-  EVENT_CONF_CLS="smoke:0.3,fire:0.5" CONF=0.15` (CONF thấp để tầng B gom ứng viên
-  false-negative làm data fine-tune vòng sau). `MODEL_VERSION=wildfire-v1`.
+  (Đã được thay bằng v2 bên dưới — engine v1 vẫn ở `weights/wildfire_y26x.engine` nếu cần rollback.)
+
+- [x] **Data v2 (2026-07-16)**: thêm **Pyro-SDIS** (HF `pyronear/pyro-sdis`, Apache-2.0,
+  33.6k ảnh camera tháp canh Pháp, khói sớm box nhỏ + 16% âm tính mây/sương —
+  `scripts/download_pyro_sdis.py`, đã verify nhãn/ảnh sạch). Dataset hợp nhất:
+  **train 21.563 (26% âm tính) / val 4.357 / test 3.058 (test KHÔNG đổi — so model các vòng công bằng)**.
+- [x] **Model v2 — PROD hiện tại (2026-07-16)**: fine-tune 15 epochs (lr0=0.001) từ v1 trên
+  dataset v2, 2.1h/1 GPU. `runs/detect/runs/wildfire_v2_y26x_960/weights/best.pt`.
+
+  | Test cũ 3.058 ảnh (so v1) | P | R | mAP50 | mAP50-95 |
+  |---|---|---|---|---|
+  | all | 0.761 | 0.689 | 0.750 (v1: 0.752) | 0.425 |
+  | smoke | 0.819 | 0.757 | **0.820** (v1: 0.819) | 0.507 |
+  | fire | 0.702 | 0.622 | 0.681 (v1: 0.685) | 0.343 |
+
+  Test cũ đi ngang (không thoái lui) — giá trị v2 nằm ở domain mới: trên **val có Pyro-SDIS**
+  (khói sớm nhỏ/xa, camera tháp canh), smoke mAP50 **0.532 (v1) → 0.757 (v2), +22,5 điểm**;
+  fire giữ nguyên (0.703→0.710) dù tỷ trọng box fire giảm 59%→32%.
+  Export TensorRT FP16: `weights/wildfire_v2_y26x.engine` (+ `.pt` cùng tên; smoke-test engine
+  trên `samples/vn_fire_test/` OK). **Serve qua `.env` (đã set)**: `MODEL_PATH=weights/wildfire_v2_y26x.engine
+  MODEL_VERSION=wildfire-v2 CONF=0.2 EVENT_CLASSES=smoke,fire EVENT_CONF_CLS="smoke:0.3,fire:0.5"`.
+  Chi tiết dataset + lệnh train/tái tạo: [docs/wildfire-dataset.md](docs/wildfire-dataset.md).
+  Verify ảnh thật: `scripts/verify_vn.py` (ảnh BE gửi vào `data/vn_verify/<nhóm>/`, so v1/v2 cùng bộ).
 
 **Chưa làm** (cần data + domain, hoặc ngoài đường nóng Lane A):
-- [ ] Data v2: DFS (lớp `other` chống nhầm nắng/đèn — tải tay), Boreal Forest Fire (UAV),
+- [ ] Data v3: DFS (lớp `other` chống nhầm nắng/đèn — tải tay), Boreal Forest Fire (UAV),
   hard-negative VN (mây/sương/khói đốt đồng) + data thật từ tầng B `uncertain/`.
 - [ ] Đo **false-alarm rate/giờ** trên video dài không cháy — metric chấp nhận của hệ cảnh báo.
 - [ ] **Georef** pixel→lat/lon (cần camera intrinsics + attitude).
@@ -75,13 +95,13 @@ nên GET-per-frame quá đắt (đo được **66 ms**). AI upload ảnh lên Mi
 { "captureId": "drone1-000123", "droneId": "drone1", "status": "ok",
   "result": { "hasDetection": true,
               "detections": [ { "type": "smoke", "confidence": 0.91, "bbox": [x,y,w,h] } ],
-              "model": "yolo26x", "modelVersion": "wildfire-v1" },
+              "model": "wildfire_v2_y26x", "modelVersion": "wildfire-v2" },
   "evidenceKey": "events/2026/07/04/drone1/smoke/356475310.jpg",  // ảnh nét nhất cửa sổ (rỗng nếu không lưu)
   "err": "" }
 
 // dms:ai:dead-letter : job giao > MAX_DELIVERIES lần (độc/treo) → đẩy vào đây + ack, thôi retry.
 ```
-`type` = nhãn model — hiện `smoke` | `fire` (wildfire-v1); domain khác sau này thêm lớp tương ứng.
+`type` = nhãn model — hiện `smoke` | `fire` (wildfire-v2); domain khác sau này thêm lớp tương ứng.
 Bbox là pixel trên ảnh gốc — **BE tự vẽ overlay khi hiển thị** (cảnh báo/gom nhóm cũng là việc BE).
 Idempotency: `done:{captureId}` chặn emit trùng.
 
@@ -249,7 +269,7 @@ upload queue bound `MINIO_MAX_PENDING` (bỏ + log khi MinIO chậm, không phì
 | Redis | `REDIS_URL` · `REDIS_PASSWORD` | (qua `.env`) |
 | Stream | `REQ_STREAM` · `RES_STREAM` · `DLQ_STREAM` | `dms:captures:ready` · `dms:ai:results` · `dms:ai:dead-letter` |
 | Backpressure | `REQ_MAXLEN` · `READ_COUNT` · `READ_BLOCK_MS` | 2000 · 16 · 20 |
-| Model | `MODEL_PATH` · `MODEL_VERSION` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · `coco-pretrained` · 960 · FP16 · 0.25 — **prod hiện tại**: `wildfire_y26x.engine` · `wildfire-v1` · CONF 0.15 |
+| Model | `MODEL_PATH` · `MODEL_VERSION` · `IMGSZ` · `HALF` · `CONF` | `weights/yolo26x.pt` · `coco-pretrained` · 960 · FP16 · 0.25 — **prod hiện tại (set trong `.env`)**: `wildfire_v2_y26x.engine` · `wildfire-v2` · CONF 0.2 |
 | Event/dedup | `EVENT_CLASSES` · `EVENT_CONF` · `EVENT_CONF_CLS` · `DEDUP_WINDOW_S` | (mọi lớp) · 0.5 · rỗng · 5 — **prod**: `smoke,fire` · `EVENT_CONF_CLS="smoke:0.3,fire:0.5"` (ngưỡng riêng từng lớp, override `EVENT_CONF`) |
 | Lưu tầng B | `SAVE_UNCERTAIN` · `UNCERTAIN_JPEG_Q` · `UNCERTAIN_TTL_DAYS` | 1 · 70 · 2 |
 | Lưu tầng C | `SAVE_BLACKBOX` · `BLACKBOX_SAMPLE_S` · `BLACKBOX_IMGSZ` · `BLACKBOX_JPEG_Q` · `BLACKBOX_TTL_DAYS` | 1 · 1 · 640 · 60 · 1 |
@@ -265,8 +285,50 @@ Secrets thật chỉ ở `.env` (gitignored). File tracked dùng placeholder. Re
 ```
 docs/            thiết kế (kiến trúc + transport spec)
 transport/       config, envelope, init_streams, producer, worker, consumer, storage, loadtest
-scripts/         run_workers.sh, run_e2e.sh, monitor.sh, mon_minio.sh
+scripts/         run_workers.sh, run_e2e.sh, monitor.sh, mon_minio.sh,
+                 prepare_wildfire_data.py, download_pyro_sdis.py, verify_vn.py
 docker-compose.yml   Redis (+ MinIO local dev fallback)
 .env.example     mẫu secrets (copy -> .env)
 weights/ data/ samples/   weights + ảnh test (gitignored)
 ```
+
+---
+
+## Bật server AI đầy đủ (checklist vận hành)
+
+Toàn bộ cấu hình model/ngưỡng đọc từ `.env` (đã set wildfire-v2) — không cần export env thủ công.
+
+```bash
+cd /home/abc/AI_project/wildfire-remote-sensing
+
+# 0) Tiền đề (chỉ kiểm lần đầu / sau khi động hạ tầng):
+#    - .env có REDIS_URL (remote qua Tailscale), MINIO_* (s3.lamhai.net), MODEL_PATH=weights/wildfire_v2_y26x.engine
+#    - engine tồn tại: ls -lh weights/wildfire_v2_y26x.engine
+#    - GPU rảnh: nvidia-smi   (mỗi worker chiếm ~1.2GB VRAM)
+
+# 1) Kiểm config được nạp đúng (in MODEL_PATH/VERSION/CONF/EVENT_*):
+.venv/bin/python -c "from transport import config as c; print(c.MODEL_PATH, c.MODEL_VERSION, c.CONF, c.EVENT_CLASSES, c.EVENT_CONF_CLS)"
+
+# 2) Khởi tạo stream + consumer group (idempotent, chạy lại vô hại):
+.venv/bin/python -m transport.init_streams
+
+# 3) Bật worker nền (mặc định 4 worker = 2/GPU; N=2 đủ cho ~4 drone):
+nohup scripts/run_workers.sh > ~/workers.log 2>&1 &
+# N=2 nohup scripts/run_workers.sh > ~/workers.log 2>&1 &
+
+# 4) Xác nhận sống: mỗi worker in processed/xlen/pending mỗi 2s
+tail -f ~/workers.log | grep --line-buffered processed
+watch -n 2 scripts/monitor.sh        # dashboard Redis + GPU + fps
+scripts/mon_minio.sh                 # 3 tầng MinIO (events/uncertain/blackbox)
+
+# 5) (tùy chọn) bắn thử 1 luồng giả lập xem kết quả chảy về dms:ai:results:
+DRONE=drone1 FPS=7 COUNT=50 scripts/run_e2e.sh
+
+# Dừng: pkill -f transport.worker   (job đang xử lý dở sẽ được reclaim khi bật lại,
+# XAUTOCLAIM sau CLAIM_MIN_IDLE_MS=30s — không mất frame)
+```
+
+Sự cố thường gặp: worker không lên → xem `~/workers.log` (thiếu engine / Redis timeout);
+`consumers` trong monitor đếm cả consumer cũ chưa dọn → tin dòng `workers:`;
+đổi model → sửa `MODEL_PATH`/`MODEL_VERSION` trong `.env` rồi restart worker (rollback v1:
+`weights/wildfire_y26x.engine` + `wildfire-v1`).
