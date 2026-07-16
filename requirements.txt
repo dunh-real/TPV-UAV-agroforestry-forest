@@ -1,3 +1,4 @@
+# Runtime AI server (worker + transport)
 msgpack==1.2.1
 numpy==2.5.0
 opencv-python==4.13.0.92
@@ -6,3 +7,15 @@ torch==2.12.1
 torchvision==0.27.1
 ultralytics==8.4.75
 ultralytics-thop==2.0.20
+minio==7.2.20            # upload ảnh 3 tầng (transport/storage.py)
+tensorrt==11.1.0.106     # chạy .engine FP16 (worker prod)
+
+# Export engine (yolo export)
+onnx==1.21.0
+onnxslim==0.1.94
+
+# Data pipeline (scripts/ — không cần trên máy chỉ serve)
+imagehash==4.3.2         # dedup pHash (prepare_wildfire_data.py)
+kagglehub==1.0.2         # tải D-Fire/WSDY
+datasets==5.0.0          # tải Pyro-SDIS từ HF (download_pyro_sdis.py)
+pillow==12.2.0
