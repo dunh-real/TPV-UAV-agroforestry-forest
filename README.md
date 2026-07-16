@@ -81,29 +81,12 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
 
 ---
 
-## Contract I/O của AI server
+## Contract I/O (tóm tắt)
 
-Ảnh **bytes đi thẳng qua Redis** (không đẩy reference) để hot-path infer nhanh — MinIO ở remote
-nên GET-per-frame quá đắt (đo được **66 ms**). AI upload ảnh lên MinIO **async** sau khi infer.
-
-```jsonc
-// NHẬN  dms:captures:ready
-{ "frame_id": "drone1-000123", "drone_id": "drone1", "ts": 1719000000.1,
-  "meta": <msgpack: gps, attitude, bands>, "img": <JPEG bytes> }
-
-// TRẢ  dms:ai:results  (schema theo BE)
-{ "captureId": "drone1-000123", "droneId": "drone1", "status": "ok",
-  "result": { "hasDetection": true,
-              "detections": [ { "type": "smoke", "confidence": 0.91, "bbox": [x,y,w,h] } ],
-              "model": "wildfire_v2_y26x", "modelVersion": "wildfire-v2" },
-  "evidenceKey": "events/2026/07/04/drone1/smoke/356475310.jpg",  // ảnh nét nhất cửa sổ (rỗng nếu không lưu)
-  "err": "" }
-
-// dms:ai:dead-letter : job giao > MAX_DELIVERIES lần (độc/treo) → đẩy vào đây + ack, thôi retry.
-```
-`type` = nhãn model — hiện `smoke` | `fire` (wildfire-v2); domain khác sau này thêm lớp tương ứng.
-Bbox là pixel trên ảnh gốc — **BE tự vẽ overlay khi hiển thị** (cảnh báo/gom nhóm cũng là việc BE).
-Idempotency: `done:{captureId}` chặn emit trùng.
+Nhận `dms:captures:ready` (5 field, `img` = raw JPEG bytes) → trả `dms:ai:results`
+(`captureId`, `result` msgpack: `detections[{type: smoke|fire, confidence, bbox pixel}]`,
+`model/modelVersion`, `evidenceKey` ảnh tầng A). **Chi tiết đầy đủ + checklist test BE:
+[docs/ai-pipeline.md](docs/ai-pipeline.md) §3, §7.**
 
 ---
 
@@ -235,30 +218,13 @@ drop frame cũ (đúng thiết kế realtime). *(Chưa gồm mạng drone→serv
 
 ---
 
-## Lưu trữ & độ tin cậy
+## Lưu trữ & độ tin cậy (tóm tắt)
 
-**Lưu ảnh 3 tầng** — chỉ lưu ảnh-có-detection thì tiết kiệm nhưng **mất frame model bỏ sót**
-(false-negative). Phân tầng theo giá trị, giảm chất lượng/tần suất cho tầng rủi ro thấp (input
-~7fps×4drone≈28fps, lưu full mọi frame ~hàng trăm GB/ngày là bất khả thi):
-
-| Tầng | Prefix | Lưu gì | Chất lượng | TTL | Ra BE? |
-|---|---|---|---|---|---|
-| **A** | `events/` | frame **có sự kiện** (≥`EVENT_CONF`) | full annotated, **dedup best-in-window** | `MINIO_TTL_DAYS` (7) | ✅ `evidenceKey` |
-| **B** | `uncertain/` | có detection thô (≥`CONF`) **chưa đạt sự kiện** — ứng viên false-negative cao nhất | annotated q`UNCERTAIN_JPEG_Q` (70) | `UNCERTAIN_TTL_DAYS` (2) | ❌ nội bộ |
-| **C** | `blackbox/` | **MỌI frame** kể cả 0-detection | thumbnail `BLACKBOX_IMGSZ` (640), lấy mẫu 1/`BLACKBOX_SAMPLE_S`(1)s/drone | `BLACKBOX_TTL_DAYS` (1) | ❌ nội bộ |
-
-→ Footprint cuộn ~15-20 GB thay vì hàng trăm GB/ngày. B/C là lưới an toàn + corpus để **chạy lại
-model mới** (sau fine-tune) bắt các miss cũ. Tầng C lấy mẫu đa-worker an toàn qua `SET NX bb:{drone}:{slot}`.
-
-**Dedup best-in-window** (tầng A): mỗi `(drone, lớp-chủ-đạo, cửa sổ DEDUP_WINDOW_S)` → 1 `evidenceKey`
-ổn định; chỉ ảnh **nét nhất** (variance of Laplacian) được upload/ghi đè (so điểm bằng **Lua atomic**
-→ đa worker an toàn). Metadata vẫn ra mọi frame → BE gom nhóm + đếm `EvidenceCount`.
-
-**Idempotency**: `done:{captureId}` (TTL `DONE_TTL_S`) — frame redeliver đã emit → chỉ ack, không trùng.
-**Dead-letter**: frame giao > `MAX_DELIVERIES` lần → `dms:ai:dead-letter` + ack (tránh loop vô tận).
-
-**MinIO hardening**: lifecycle TTL **theo từng tầng** (rule riêng `events/`·`uncertain/`·`blackbox/`);
-upload queue bound `MINIO_MAX_PENDING` (bỏ + log khi MinIO chậm, không phình RAM); upload async off hot-path.
+Ảnh lưu MinIO **3 tầng**: A `events/` (sự kiện, full annotated, dedup best-in-window, ra BE qua
+`evidenceKey`) · B `uncertain/` (detection dưới ngưỡng sự kiện — ứng viên false-negative + data
+fine-tune vòng sau) · C `blackbox/` (mọi frame, thumbnail lấy mẫu) — footprint cuộn ~15–20GB,
+TTL theo tầng. Idempotency `done:{captureId}`, dead-letter, reclaim worker chết.
+**Thiết kế đầy đủ: [docs/ai-pipeline.md](docs/ai-pipeline.md) §4, §5.**
 
 ---
 
