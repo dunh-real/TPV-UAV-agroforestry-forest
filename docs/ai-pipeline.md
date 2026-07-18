@@ -121,7 +121,7 @@ XREADGROUP GROUP cg:be be-worker-01 COUNT 10 BLOCK 5000 STREAMS dms:ai:results >
 XACK dms:ai:results cg:be <entry-id>     # BẮT BUỘC, không ack = kẹt pending
 ```
 
-MinIO cho BE: endpoint + creds trong `.env` (`s3.lamhai.net`, bucket `images`). Chỉ tầng A
+MinIO cho BE: endpoint + creds trong `.env` (`s3.lamhai.net`, bucket `dfms` — truy cập qua PRESIGNED URL, xem `scripts/presign_url.py`). Chỉ tầng A
 (`events/…`) ra BE; `uncertain/`/`blackbox/` là nội bộ AI.
 
 ---
@@ -218,6 +218,6 @@ chỉ ảnh **nét nhất** (variance of Laplacian, so điểm Lua atomic) đư�
 2. Chạy consumer nền: `XREADGROUP GROUP cg:be ... dms:ai:results >` → unpack → **XACK**.
 3. Đẩy N frame đúng 5 field (mục 3.1) — `frame_id` duy nhất, `ts` string giây, `meta` msgpack, `img` raw JPEG.
 4. Mỗi `frame_id` nhận đúng **một** entry `captureId = frame_id`; `status=error` thì đọc `err`.
-5. `hasDetection=true` → `evidenceKey != ""` → GET MinIO bucket `images` ra ảnh annotated.
+5. `hasDetection=true` → `evidenceKey != ""` → lấy presigned GET URL (bucket `dfms`) ra ảnh annotated.
 6. Đo g2g = `BE_now − result.ts` (kỳ vọng p50 ~20ms @ 4 drone).
 7. Không có AI trả lời vẫn xác minh được ống: `XLEN dms:captures:ready` tăng rồi tụt về ~0.

@@ -71,12 +71,13 @@ class ImageStore:
         return f"annotated/{day}/{frame_id}.jpg"
 
     @staticmethod
-    def window_key(drone_id: str, cls: str, window_id: int) -> str:
-        """Key ỔN ĐỊNH cho 1 (drone, lớp, cửa sổ) — ảnh nét nhất ghi đè vào đây.
+    def window_key(drone_id: str, window_id: int) -> str:
+        """Key ỔN ĐỊNH cho 1 (drone, cửa sổ) — ảnh nét nhất ghi đè vào đây; KHÔNG tách
+        thư mục theo lớp (smoke/fire lưu chung, ảnh annotated đã vẽ đủ box mọi lớp).
         Cửa sổ sau = key khác → mỗi cửa sổ giữ 1 ảnh đại diện riêng.
         """
         day = datetime.now(timezone.utc).strftime("%Y/%m/%d")
-        return f"events/{day}/{drone_id}/{cls}/{window_id}.jpg"
+        return f"events/{day}/{drone_id}/{window_id}.jpg"
 
     @staticmethod
     def uncertain_key(drone_id: str, frame_id: str) -> str:
@@ -158,6 +159,13 @@ class ImageStore:
 
         self._pool.submit(_do)
         return True
+
+    def presigned_get(self, key: str, expiry_s: int = 3600) -> str:
+        """Presigned GET URL — cách CHUẨN để BE/FE truy cập object mà không expose bucket
+        public và không phát creds. Trả URL tự hết hạn sau `expiry_s` giây.
+        """
+        from datetime import timedelta
+        return self.client.presigned_get_object(self.bucket, key, expires=timedelta(seconds=expiry_s))
 
     def get(self, key: str) -> bytes:
         resp = self.client.get_object(self.bucket, key)

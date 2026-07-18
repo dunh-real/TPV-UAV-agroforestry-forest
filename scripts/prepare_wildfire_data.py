@@ -31,6 +31,12 @@ CACHE = Path.home() / ".cache" / "kagglehub" / "datasets"
 DFIRE = CACHE / "sayedgamal99/smoke-fire-detection-yolo/versions/1/data"
 WSDY = CACHE / "ahemateja19bec1025/wildfiresmokedatasetyolo/versions/2/WildFire_Smoke_Dataset_YOLO"
 PYRO = ROOT / "data" / "wildfire" / "raw" / "pyro_sdis"
+# FlamEye (HF Hajorda/flameye-wildfire-detection): giàu fire, class id nguồn 0=fire,1=smoke
+# → remap ngược {0:1, 1:0}. Tải bằng scripts/download_flameye.py.
+FLAMEYE = ROOT / "data" / "wildfire" / "raw" / "flameye"
+# roscoe_fire: subset CÓ FIRE của Kaggle roscoekerby/firesmoke-detection-yolo-v9
+# (chỉ ảnh chứa ≥1 box fire, lọc sẵn khi extract). Class id nguồn 0=fire,1=smoke → remap.
+ROSCOE = ROOT / "data" / "wildfire" / "raw" / "roscoe_fire"
 
 # (tag, src_images_dir, split_out, class_map {src_id: dst_id})
 SOURCES = [
@@ -38,10 +44,12 @@ SOURCES = [
     ("dfire", DFIRE / "test" / "images",  "test",  {0: 0, 1: 1}),
     ("wsdy",  WSDY / "valid" / "images",  "val",   {0: 0}),
     ("wsdy",  WSDY / "test" / "images",   "test",  {0: 0}),
-    ("pyro",  PYRO / "val" / "images",    "val",   {0: 0, 1: 0}),
+    #     ("pyro",  PYRO / "val" / "images",    "val",   {0: 0, 1: 0}),  # tắt 18/07: dataset về cấu hình v1; bật lại khi gộp data thực tế
     ("dfire", DFIRE / "train" / "images", "train", {0: 0, 1: 1}),
     ("wsdy",  WSDY / "train" / "images",  "train", {0: 0}),
-    ("pyro",  PYRO / "train" / "images",  "train", {0: 0, 1: 0}),
+    #     ("pyro",  PYRO / "train" / "images",  "train", {0: 0, 1: 0}),  # tắt 18/07: dataset về cấu hình v1; bật lại khi gộp data thực tế
+    #     ("flameye", FLAMEYE / "train" / "images", "train", {0: 1, 1: 0}),  # tắt 18/07: dataset về cấu hình v1; bật lại khi gộp data thực tế
+    #     ("roscoe", ROSCOE / "train" / "images", "train", {0: 1, 1: 0}),  # tắt 18/07: dataset về cấu hình v1; bật lại khi gộp data thực tế
 ]
 
 HAM_THRESH = 4

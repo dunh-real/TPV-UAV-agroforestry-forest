@@ -62,8 +62,11 @@ Drone ─XADD─> [Redis: dms:captures:ready] ─XREADGROUP─> AI Worker ─XAD
   (khói sớm nhỏ/xa, camera tháp canh), smoke mAP50 **0.532 (v1) → 0.757 (v2), +22,5 điểm**;
   fire giữ nguyên (0.703→0.710) dù tỷ trọng box fire giảm 59%→32%.
   Export TensorRT FP16: `weights/wildfire_v2_y26x.engine` (+ `.pt` cùng tên; smoke-test engine
-  trên `samples/vn_fire_test/` OK). **Serve qua `.env` (đã set)**: `MODEL_PATH=weights/wildfire_v2_y26x.engine
-  MODEL_VERSION=wildfire-v2 CONF=0.2 EVENT_CLASSES=smoke,fire EVENT_CONF_CLS="smoke:0.3,fire:0.5"`.
+  trên `samples/vn_fire_test/` OK).
+- **2026-07-18 — prod QUAY VỀ v1** sau khi test thực tế (v2 yếu fire trên cảnh drone; thử
+  nghiệm v3 cân bằng lớp bằng data public không vượt v1 — chi tiết docs/wildfire.md).
+  **Serve qua `.env` (đã set)**: `MODEL_PATH=weights/wildfire_y26x.engine
+  MODEL_VERSION=wildfire-v1 CONF=0.2 EVENT_CLASSES=smoke,fire EVENT_CONF_CLS="smoke:0.3,fire:0.4"`.
   Chi tiết dataset + phương pháp train/tái tạo: [docs/wildfire.md](docs/wildfire.md).
   Verify ảnh thật: `scripts/verify_vn.py` (ảnh BE gửi vào `data/vn_verify/<nhóm>/`, so v1/v2 cùng bộ).
 
@@ -240,7 +243,7 @@ TTL theo tầng. Idempotency `done:{captureId}`, dead-letter, reclaim worker ch�
 | Lưu tầng B | `SAVE_UNCERTAIN` · `UNCERTAIN_JPEG_Q` · `UNCERTAIN_TTL_DAYS` | 1 · 70 · 2 |
 | Lưu tầng C | `SAVE_BLACKBOX` · `BLACKBOX_SAMPLE_S` · `BLACKBOX_IMGSZ` · `BLACKBOX_JPEG_Q` · `BLACKBOX_TTL_DAYS` | 1 · 1 · 640 · 60 · 1 |
 | Độ tin cậy | `DONE_TTL_S` · `MAX_DELIVERIES` · `CLAIM_MIN_IDLE_MS` | 120 · 5 · 30000 |
-| MinIO | `MINIO_ENDPOINT` · `MINIO_SECURE` · `MINIO_BUCKET` · `MINIO_TTL_DAYS` · `MINIO_MAX_PENDING` | (qua `.env`) · `images` · 7 · 4096 |
+| MinIO | `MINIO_ENDPOINT` · `MINIO_SECURE` · `MINIO_BUCKET` · `MINIO_TTL_DAYS` · `MINIO_MAX_PENDING` | (qua `.env`) · `dfms` · 7 · 4096 |
 
 Secrets thật chỉ ở `.env` (gitignored). File tracked dùng placeholder. Redis qua mạng ngoài → bật TLS (`rediss://`).
 

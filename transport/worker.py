@@ -200,10 +200,11 @@ def process_batch(model, r, entries, store) -> int:
         evidence_key = ""
         if store is not None:
             if events:
-                top = max(events, key=lambda d: d["conf"])  # lớp conf cao nhất làm đại diện
                 win = int(req["ts"] // config.DEDUP_WINDOW_S)
-                evidence_key = store.window_key(req["drone_id"], top["cls"], win)
-                if is_best_in_window(r, f"best:{req['drone_id']}:{top['cls']}:{win}", sharpness(img)):
+                # Lưu CHUNG mọi lớp vào events/ (không tách smoke/fire): 1 ảnh đại diện
+                # per (drone, cửa sổ); ảnh annotated vẽ đủ box mọi lớp nên không mất thông tin.
+                evidence_key = store.window_key(req["drone_id"], win)
+                if is_best_in_window(r, f"best:{req['drone_id']}:{win}", sharpness(img)):
                     # JPEG encode chạy trong thread upload (off hot-path); chỉ res.plot() ở đây.
                     store.put_image_async(evidence_key, res.plot(), 85)
             elif config.SAVE_UNCERTAIN and dets:
@@ -272,7 +273,10 @@ def main() -> None:
 
     print(f"[worker {name}] ready. consuming {config.REQ_STREAM} group {config.CG_AI}")
 
-    total, last_log = 0, time.time()
+    # Log 2 nhịp: CÓ việc → in mỗi 2s kèm delta (+N, fps); rảnh → chỉ heartbeat 60s/lần
+    # để log không ngập dòng "processed=X" lặp lại khi không có frame nào mới.
+    total, last_log, last_total = 0, time.time(), 0
+    IDLE_HEARTBEAT_S = 60.0
     while not _stop:
         # Trước hết nhặt lại frame pending của worker chết (XPENDING+XCLAIM, spec §4.4).
         try:
@@ -309,10 +313,17 @@ def main() -> None:
             total += process_batch(model, r, entries, store)
 
         now = time.time()
-        if now - last_log >= 2.0:
-            print(f"[worker {name}] processed={total} xlen={r.xlen(config.REQ_STREAM)} "
-                  f"pending={r.xpending(config.REQ_STREAM, config.CG_AI)['pending']}")
-            last_log = now
+        delta = total - last_total
+        if (delta > 0 and now - last_log >= 2.0) or now - last_log >= IDLE_HEARTBEAT_S:
+            dt = now - last_log
+            if delta > 0:
+                print(f"[worker {name}] +{delta} ({delta / dt:.1f} fps) total={total} "
+                      f"xlen={r.xlen(config.REQ_STREAM)} "
+                      f"pending={r.xpending(config.REQ_STREAM, config.CG_AI)['pending']}")
+            else:
+                print(f"[worker {name}] idle {dt:.0f}s, total={total} "
+                      f"xlen={r.xlen(config.REQ_STREAM)}")
+            last_log, last_total = now, total
 
     print(f"[worker {name}] stopped. total processed={total}")
 

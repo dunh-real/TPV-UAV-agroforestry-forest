@@ -28,6 +28,21 @@ FIgLib 24.8k (thiên classification chuỗi frame, không bbox chuẩn YOLO), Ne
 5. Kết quả **v2-data** (thêm Pyro-SDIS, 2026-07-16): **train 21.563 (5.677 âm tính) / val 4.357
    / test 3.058 (KHÔNG đổi — so sánh model các vòng trên cùng test)**; boxes train: 17.342 smoke, 8.335 fire.
    Đã verify nguồn Pyro-SDIS: 0 box lỗi, 0 ảnh hỏng (sample 300), đồng nhất 1280×720.
+6. Thí nghiệm **v3-data** (2026-07-18, cân bằng lớp): thêm subset có-fire của Kaggle
+   roscoekerby/firesmoke-detection-yolo-v9 (lọc bỏ 2.504 ảnh bật lửa indoor sai domain,
+   remap 0=fire,1=smoke → chuẩn ta) → train 28.464, smoke/fire 18.528/18.264 (~50/50).
+   Train v3 (fine-tune từ v2, SGD lr0=0.0005, 10 epochs — LƯU Ý: `optimizer=auto` sẽ
+   override lr thành AdamW 0.00167 làm mAP sụp, phải chỉ định SGD tường minh):
+   test đóng băng all 0.741 / smoke 0.806 / fire 0.677 — **thua v1** (0.752/0.818/0.686)
+   ~1 điểm mọi lớp; frame drone thực tế conf thấp hơn hẳn (fire 0.20 vs 0.46).
+   Trên cùng test, v2 fire ≈ v1 fire (0.682 vs 0.686). KẾT LUẬN: **prod dùng v1**
+   (fire event conf hạ 0.5→0.4); checkpoint v2/v3 lưu `runs/detect/runs/`. Ngõ cụt đã
+   thử: FLAME/FLAME2/FLAME3 (không có bbox — pseudo-label bằng model đang yếu fire là
+   phản tác dụng), FlamEye (dataset gộp, 99% trùng nguồn đã có). Data CCTV/cận cảnh kéo
+   model lệch domain drone — vòng sau ưu tiên DATA THỰC TẾ từ pipeline (uncertain/ +
+   blackbox/ trên MinIO, gắn nhãn người duyệt, trộn replay 20-30% data cũ) hoặc FASDD aerial.
+   `SOURCES` trong prepare_wildfire_data.py đã comment pyro/flameye/roscoe — dataset hiện
+   hành = cấu hình v1; raw đã xử lý còn ở `data/wildfire/raw/` để bật lại khi cần.
 
 Tái tạo: `.venv/bin/python scripts/prepare_wildfire_data.py` (idempotent, xóa dựng lại `data/wildfire/dataset`).
 
